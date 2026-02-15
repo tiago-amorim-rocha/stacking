@@ -1,3 +1,5 @@
+import { initDebugOverlay } from './debugOverlay';
+
 import {
   b2BodyType,
   b2CircleShape,
@@ -29,6 +31,9 @@ canvas.style.width = '100%';
 canvas.style.height = '100%';
 
 app.append(canvas);
+
+initDebugOverlay();
+console.log('Debug overlay initialized');
 
 const world = b2World.Create(new b2Vec2(0, 10));
 const circles: { body: ReturnType<typeof world.CreateBody>; radius: number; color: string }[] = [];
