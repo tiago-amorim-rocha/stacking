@@ -5,11 +5,12 @@ interface VersionInfo {
   date?: string;
   buildId?: string;
   gitHash?: string;
+  commitMessage?: string;
 }
 
 const VERSION_ENDPOINT = './version.json';
+const VERSION_CHECK_INTERVAL_MS = 5_000;
 const MAX_MESSAGES = 200;
-const VERSION_CHECK_INTERVAL_MS = 10_000;
 
 const messages: { level: ConsoleLevel; text: string; time: string }[] = [];
 const levelFilters: Record<ConsoleLevel, boolean> = {
@@ -29,8 +30,10 @@ const originalConsole = {
 let outputEl: HTMLDivElement | null = null;
 let statusEl: HTMLSpanElement | null = null;
 let versionTextEl: HTMLSpanElement | null = null;
+let updateButtonEl: HTMLButtonElement | null = null;
 let isOpen = false;
-let currentVersion: VersionInfo | null = null;
+let currentVersion: VersionInfo | null = (window as Window & { __BUILD_INFO?: VersionInfo }).__BUILD_INFO ?? null;
+let updateAvailable = false;
 
 const serializeArg = (arg: unknown): string => {
   if (typeof arg === 'string') return arg;
@@ -43,6 +46,12 @@ const serializeArg = (arg: unknown): string => {
     }
   }
   return String(arg);
+};
+
+const escapeHtml = (text: string): string => {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
 };
 
 const addMessage = (level: ConsoleLevel, args: unknown[]): void => {
@@ -70,10 +79,11 @@ const renderMessages = (): void => {
       (entry) => `
       <div class="dbg-msg dbg-msg--${entry.level}">
         <span class="dbg-time">[${entry.time}]</span>
-        <span>${entry.text.replaceAll('<', '&lt;').replaceAll('>', '&gt;')}</span>
+        <span>${escapeHtml(entry.text)}</span>
       </div>`,
     )
     .join('');
+
   outputEl.scrollTop = outputEl.scrollHeight;
 
   if (statusEl) {
@@ -91,39 +101,82 @@ const formatVersionLabel = (version: VersionInfo | null): string => {
   if (!version) return 'Version: unknown';
   const hash = version.gitHash ?? 'no-hash';
   const build = version.buildId?.slice(0, 8) ?? 'no-build';
-  return `Version: ${hash} (${build})`;
+  const date = version.date ? new Date(version.date).toLocaleString() : null;
+  const commit = version.commitMessage?.trim();
+
+  const parts = [`Version: ${hash} (${build})`];
+  if (date) parts.push(`• ${date}`);
+  if (commit) parts.push(`• ${commit}`);
+  return parts.join(' ');
 };
 
 const setVersionLabel = (version: VersionInfo | null): void => {
-  if (!versionTextEl) return;
-  versionTextEl.textContent = formatVersionLabel(version);
+  if (versionTextEl) {
+    versionTextEl.textContent = formatVersionLabel(version);
+  }
+};
+
+const showUpdateButton = (nextVersion: VersionInfo): void => {
+  if (!updateButtonEl || updateAvailable) return;
+
+  updateAvailable = true;
+  updateButtonEl.classList.add('is-visible');
+  if (nextVersion.gitHash) {
+    updateButtonEl.title = `New build ${nextVersion.gitHash} available. Tap to refresh.`;
+  }
+};
+
+const reloadApp = async (): Promise<void> => {
+  try {
+    if ('caches' in window) {
+      const cacheNames = await caches.keys();
+      await Promise.all(cacheNames.map((cacheName) => caches.delete(cacheName)));
+    }
+  } catch (error) {
+    console.warn('Failed to clear cache before reload:', error);
+  } finally {
+    window.location.reload();
+  }
 };
 
 const fetchVersion = async (): Promise<VersionInfo> => {
-  const response = await fetch(VERSION_ENDPOINT, { cache: 'no-store' });
+  const response = await fetch(VERSION_ENDPOINT, {
+    cache: 'no-store',
+    headers: {
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      Pragma: 'no-cache',
+    },
+  });
+
   if (!response.ok) {
     throw new Error(`Failed to fetch version.json (${response.status})`);
   }
+
   return response.json() as Promise<VersionInfo>;
 };
 
 const monitorVersion = async (): Promise<void> => {
   try {
     const latest = await fetchVersion();
+
     if (!currentVersion) {
       currentVersion = latest;
       setVersionLabel(currentVersion);
       return;
     }
 
-    if (latest.buildId !== currentVersion.buildId || latest.timestamp !== currentVersion.timestamp) {
-      console.warn('New build detected. Reload to use the latest version.', {
+    const hasUpdate = latest.buildId !== currentVersion.buildId || latest.timestamp !== currentVersion.timestamp;
+
+    if (hasUpdate) {
+      console.warn('🔄 New version detected', {
         current: currentVersion,
         latest,
       });
-      currentVersion = latest;
-      setVersionLabel(currentVersion);
+      showUpdateButton(latest);
     }
+
+    currentVersion = latest;
+    setVersionLabel(currentVersion);
   } catch (error) {
     console.debug('Version monitor skipped:', error);
   }
@@ -154,43 +207,61 @@ const interceptConsole = (): void => {
     originalConsole.error(...args);
     addMessage('error', args);
   };
+
+  window.addEventListener('error', (event) => {
+    addMessage('error', [`Unhandled: ${event.message} at ${event.filename}:${event.lineno}`]);
+  });
+
+  window.addEventListener('unhandledrejection', (event) => {
+    addMessage('error', [`Unhandled Promise: ${serializeArg(event.reason)}`]);
+  });
 };
 
 const createUi = (): void => {
   const root = document.createElement('div');
   root.innerHTML = `
     <style>
-      .dbg-toggle {
-        position: fixed;
-        right: 12px;
-        bottom: calc(12px + env(safe-area-inset-bottom));
-        z-index: 1000;
-        border: 0;
-        border-radius: 999px;
-        padding: 10px 12px;
-        background: #111827;
-        color: #f9fafb;
-        font: 600 14px system-ui;
-      }
       .dbg-version {
         position: fixed;
         top: calc(10px + env(safe-area-inset-top));
         left: 10px;
-        z-index: 999;
+        right: 10px;
+        z-index: 1001;
         padding: 6px 10px;
         border-radius: 8px;
-        background: rgb(17 24 39 / 75%);
+        background: rgb(17 24 39 / 78%);
         color: #e5e7eb;
-        font: 500 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+        font: 500 11px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
+      .dbg-toggle,
+      .dbg-update {
+        position: fixed;
+        bottom: calc(12px + env(safe-area-inset-bottom));
+        z-index: 1002;
+        border: 0;
+        border-radius: 999px;
+        padding: 10px 12px;
+        color: #f9fafb;
+        font: 600 14px system-ui;
+      }
+      .dbg-toggle { right: 12px; background: #111827; }
+      .dbg-update {
+        right: 62px;
+        background: #7c2d12;
+        display: none;
+      }
+      .dbg-update.is-visible { display: inline-block; }
       .dbg-panel {
         position: fixed;
         inset: auto 0 0 0;
-        z-index: 1000;
+        z-index: 1003;
         display: none;
         flex-direction: column;
         gap: 8px;
-        max-height: 45vh;
+        max-height: 48vh;
         padding: 10px;
         background: rgb(0 0 0 / 88%);
         color: #f9fafb;
@@ -207,6 +278,7 @@ const createUi = (): void => {
       .dbg-time { color: #9ca3af; margin-right: 6px; }
     </style>
     <div class="dbg-version"><span id="dbg-version-text">Version: loading...</span></div>
+    <button id="dbg-update" class="dbg-update" type="button" aria-label="Refresh to latest version">↻ Update</button>
     <button id="dbg-toggle" class="dbg-toggle" type="button" aria-label="Toggle debug console">🐛</button>
     <section id="dbg-panel" class="dbg-panel" aria-live="polite">
       <div class="dbg-toolbar">
@@ -225,6 +297,7 @@ const createUi = (): void => {
   outputEl = root.querySelector<HTMLDivElement>('#dbg-output');
   statusEl = root.querySelector<HTMLSpanElement>('#dbg-status');
   versionTextEl = root.querySelector<HTMLSpanElement>('#dbg-version-text');
+  updateButtonEl = root.querySelector<HTMLButtonElement>('#dbg-update');
 
   const toggleButton = root.querySelector<HTMLButtonElement>('#dbg-toggle');
   const panel = root.querySelector<HTMLElement>('#dbg-panel');
@@ -244,6 +317,11 @@ const createUi = (): void => {
     }
   });
 
+  updateButtonEl?.addEventListener('click', () => {
+    console.log('🔄 Refreshing app to load latest build');
+    void reloadApp();
+  });
+
   clearButton?.addEventListener('click', () => {
     messages.length = 0;
     renderMessages();
@@ -259,6 +337,8 @@ const createUi = (): void => {
 export const initDebugOverlay = (): void => {
   createUi();
   interceptConsole();
-  monitorVersion();
-  window.setInterval(monitorVersion, VERSION_CHECK_INTERVAL_MS);
+  void monitorVersion();
+  window.setInterval(() => {
+    void monitorVersion();
+  }, VERSION_CHECK_INTERVAL_MS);
 };
