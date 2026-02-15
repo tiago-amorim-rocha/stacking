@@ -8,7 +8,8 @@ interface VersionInfo {
 }
 
 const VERSION_CHECK_INTERVAL = 5000;
-const VERSION_ENDPOINT = new URL('version.json', window.location.href).toString();
+const VERSION_ENDPOINT = `${import.meta.env.BASE_URL}version.json`;
+let versionFetchWarned = false;
 const MAX_MESSAGES = 200;
 
 let isOpen = false;
@@ -149,7 +150,10 @@ const checkForUpdates = async (): Promise<void> => {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.debug('Version check failed:', message);
+    if (!versionFetchWarned) {
+      console.warn('Version metadata unavailable; keeping current label.', message);
+      versionFetchWarned = true;
+    }
   }
 };
 

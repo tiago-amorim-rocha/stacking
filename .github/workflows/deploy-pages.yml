@@ -36,6 +36,11 @@ jobs:
       - name: Build site
         run: npm run build
 
+      - name: Copy version metadata into deploy artifact
+        run: |
+          cp version.json dist/version.json
+          cp version.txt dist/version.txt
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
