@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   workflow_run:
-    workflows: ["Auto-promote to main"]
+    workflows: ["Auto-update version metadata on main commits", "Auto-promote to main"]
     types: [completed]
     branches: [main]
   push:
