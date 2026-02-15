@@ -9,6 +9,7 @@ interface VersionInfo {
 
 const VERSION_CHECK_INTERVAL = 5000;
 const VERSION_ENDPOINT = `${import.meta.env.BASE_URL}version.json`;
+const AUTO_RELOAD_DELAY_MS = 1500;
 let versionFetchWarned = false;
 const MAX_MESSAGES = 200;
 
@@ -31,6 +32,8 @@ let output: HTMLDivElement | null = null;
 let levelStatus: HTMLSpanElement | null = null;
 let versionLabel: HTMLSpanElement | null = null;
 let currentVersion: VersionInfo | null = null;
+let checkCounter = 0;
+let reloadScheduled = false;
 
 const serializeArg = (arg: unknown): string => {
   if (typeof arg === 'string') return arg;
@@ -129,10 +132,21 @@ const fetchVersionInfo = async (): Promise<VersionInfo> => {
 
 const checkForUpdates = async (): Promise<void> => {
   try {
+    checkCounter += 1;
     const latestVersion = await fetchVersionInfo();
+
+    if (checkCounter % 6 === 0) {
+      console.log(`👁️ Version check #${checkCounter}`, {
+        endpoint: VERSION_ENDPOINT,
+        current: currentVersion?.buildId ?? null,
+        latest: latestVersion?.buildId ?? null,
+        reloadScheduled,
+      });
+    }
 
     if (!currentVersion) {
       currentVersion = latestVersion;
+      console.log('📦 Baseline version captured from server', latestVersion);
       updateVersionLabel();
       return;
     }
@@ -147,6 +161,19 @@ const checkForUpdates = async (): Promise<void> => {
       });
       currentVersion = latestVersion;
       updateVersionLabel();
+
+      if (!reloadScheduled) {
+        reloadScheduled = true;
+        console.warn(
+          `♻️ Auto-reload scheduled in ${AUTO_RELOAD_DELAY_MS}ms to activate latest build.`,
+        );
+        window.setTimeout(() => {
+          console.log('🔄 Reloading page now...');
+          window.location.reload();
+        }, AUTO_RELOAD_DELAY_MS);
+      } else {
+        console.log('ℹ️ Reload already scheduled; skipping duplicate schedule.');
+      }
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
