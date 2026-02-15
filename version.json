@@ -1,7 +1,7 @@
 {
-  "timestamp": 1771177520141,
-  "date": "2026-02-15T17:45:20Z",
-  "buildId": "c2921fe30ba5722e",
-  "gitHash": "a9eee04",
-  "commitMessage": "fix: remove HUD circle counter"
+  "timestamp": 1771179249232,
+  "date": "2026-02-15T18:14:09Z",
+  "buildId": "9594e70a298aa141",
+  "gitHash": "f20e4d4",
+  "commitMessage": "Rename agent instructions file to AGENTS.md"
 }
