@@ -34,6 +34,7 @@ let versionLabel: HTMLSpanElement | null = null;
 let currentVersion: VersionInfo | null = null;
 let checkCounter = 0;
 let reloadScheduled = false;
+let headerDebugLogged = false;
 
 const serializeArg = (arg: unknown): string => {
   if (typeof arg === 'string') return arg;
@@ -115,7 +116,10 @@ const updateVersionLabel = (): void => {
 };
 
 const fetchVersionInfo = async (): Promise<VersionInfo> => {
-  const response = await fetch(VERSION_ENDPOINT, {
+  const versionUrl = new URL(VERSION_ENDPOINT, window.location.href);
+  versionUrl.searchParams.set('t', String(Date.now()));
+
+  const response = await fetch(versionUrl.toString(), {
     cache: 'no-store',
     headers: {
       'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -125,6 +129,18 @@ const fetchVersionInfo = async (): Promise<VersionInfo> => {
 
   if (!response.ok) {
     throw new Error(`version request failed (${response.status})`);
+  }
+
+  if (!headerDebugLogged) {
+    headerDebugLogged = true;
+    console.log('🛰️ Version response headers', {
+      url: versionUrl.toString(),
+      cacheControl: response.headers.get('cache-control'),
+      age: response.headers.get('age'),
+      etag: response.headers.get('etag'),
+      lastModified: response.headers.get('last-modified'),
+      xCache: response.headers.get('x-cache') ?? response.headers.get('cf-cache-status'),
+    });
   }
 
   return response.json() as Promise<VersionInfo>;

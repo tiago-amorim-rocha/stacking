@@ -36,10 +36,33 @@ jobs:
       - name: Build site
         run: npm run build
 
-      - name: Copy version metadata into deploy artifact
+      - name: Generate fresh version metadata for this deploy
+        env:
+          GIT_SHA: ${{ github.sha }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
-          cp version.json dist/version.json
-          cp version.txt dist/version.txt
+          ts=$(date +%s%3N)
+          iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          short_sha="${GIT_SHA:0:7}"
+          build_id="${GIT_SHA:0:16}"
+
+          TS="${ts}" ISO="${iso}" SHORT_SHA="${short_sha}" BUILD_ID="${build_id}" COMMIT_MESSAGE="${COMMIT_MESSAGE}" \
+            python - <<'PYMETA'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "timestamp": int(os.environ["TS"]),
+              "date": os.environ["ISO"],
+              "buildId": os.environ["BUILD_ID"],
+              "gitHash": os.environ["SHORT_SHA"],
+              "commitMessage": os.environ.get("COMMIT_MESSAGE", ""),
+          }
+
+          Path("dist/version.json").write_text(json.dumps(payload, indent=2) + "\n")
+          Path("dist/version.txt").write_text(f"{payload['timestamp']}\n")
+          PYMETA
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
