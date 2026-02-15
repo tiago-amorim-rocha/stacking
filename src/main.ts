@@ -10,6 +10,9 @@ const PHYSICS_SCALE = 30;
 const TIME_STEP = 1 / 60;
 const STEP_CONFIG = { velocityIterations: 8, positionIterations: 3 } as const;
 const SPAWN_INTERVAL_MS = 500;
+const MAX_DEVICE_PIXEL_RATIO = 2;
+const MIN_WORLD_WIDTH_METERS = 12;
+const SIDE_PADDING_PX = 24;
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) {
@@ -22,34 +25,74 @@ if (!context) {
   throw new Error('Canvas 2D context unavailable');
 }
 
+canvas.style.width = '100%';
+canvas.style.height = '100%';
+
 app.append(canvas);
 
 const world = b2World.Create(new b2Vec2(0, 10));
 const circles: { body: ReturnType<typeof world.CreateBody>; radius: number; color: string }[] = [];
 
-const floorShape = new b2PolygonShape().SetAsBox(200, 0.5, { x: 0, y: 22 }, 0);
-world
-  .CreateBody({ type: b2BodyType.b2_staticBody })
-  .CreateFixture({ shape: floorShape, friction: 0.7 });
+let floorBody: ReturnType<typeof world.CreateBody> | undefined;
+let leftWallBody: ReturnType<typeof world.CreateBody> | undefined;
+let rightWallBody: ReturnType<typeof world.CreateBody> | undefined;
+let canvasWidth = 0;
+let canvasHeight = 0;
+let worldHalfWidth = MIN_WORLD_WIDTH_METERS / 2;
+let worldFloorY = 22;
+let worldTopPadding = 2;
 
-const wallThickness = 0.5;
-world
-  .CreateBody({ type: b2BodyType.b2_staticBody })
-  .CreateFixture({
-    shape: new b2PolygonShape().SetAsBox(wallThickness, 100, { x: -15, y: 0 }, 0),
+const rebuildBounds = () => {
+  if (floorBody) {
+    world.DestroyBody(floorBody);
+  }
+  if (leftWallBody) {
+    world.DestroyBody(leftWallBody);
+  }
+  if (rightWallBody) {
+    world.DestroyBody(rightWallBody);
+  }
+
+  const wallThickness = 0.5;
+  const floorHalfHeight = 0.5;
+  const worldHeight = canvasHeight / PHYSICS_SCALE;
+  worldHalfWidth = Math.max(MIN_WORLD_WIDTH_METERS / 2, canvasWidth / (2 * PHYSICS_SCALE) - SIDE_PADDING_PX / PHYSICS_SCALE);
+  worldFloorY = worldHeight - 2;
+  worldTopPadding = 1.5;
+
+  floorBody = world.CreateBody({ type: b2BodyType.b2_staticBody });
+  floorBody.CreateFixture({
+    shape: new b2PolygonShape().SetAsBox(worldHalfWidth + 4, floorHalfHeight, { x: 0, y: worldFloorY }, 0),
+    friction: 0.7,
   });
-world
-  .CreateBody({ type: b2BodyType.b2_staticBody })
-  .CreateFixture({
-    shape: new b2PolygonShape().SetAsBox(wallThickness, 100, { x: 15, y: 0 }, 0),
+
+  leftWallBody = world.CreateBody({ type: b2BodyType.b2_staticBody });
+  leftWallBody.CreateFixture({
+    shape: new b2PolygonShape().SetAsBox(wallThickness, worldHeight, { x: -worldHalfWidth, y: worldHeight / 2 }, 0),
   });
+
+  rightWallBody = world.CreateBody({ type: b2BodyType.b2_staticBody });
+  rightWallBody.CreateFixture({
+    shape: new b2PolygonShape().SetAsBox(wallThickness, worldHeight, { x: worldHalfWidth, y: worldHeight / 2 }, 0),
+  });
+};
 
 const resize = () => {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+  const viewport = window.visualViewport;
+  const width = Math.max(1, Math.round(viewport?.width ?? window.innerWidth));
+  const height = Math.max(1, Math.round(viewport?.height ?? window.innerHeight));
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, MAX_DEVICE_PIXEL_RATIO);
+
+  canvasWidth = width;
+  canvasHeight = height;
+  canvas.width = Math.round(width * pixelRatio);
+  canvas.height = Math.round(height * pixelRatio);
+  context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  rebuildBounds();
 };
 
 window.addEventListener('resize', resize);
+window.visualViewport?.addEventListener('resize', resize);
 resize();
 
 const randomColor = () => `hsl(${Math.floor(Math.random() * 360)} 90% 65%)`;
@@ -58,7 +101,7 @@ const spawnCircle = () => {
   const radius = 0.25 + Math.random() * 0.45;
   const body = world.CreateBody({
     type: b2BodyType.b2_dynamicBody,
-    position: { x: -8 + Math.random() * 16, y: -2 },
+    position: { x: -worldHalfWidth * 0.7 + Math.random() * worldHalfWidth * 1.4, y: worldTopPadding },
     angularVelocity: Math.random() * 4 - 2,
   });
 
@@ -75,12 +118,12 @@ const spawnCircle = () => {
 let previousSpawn = 0;
 
 const render = () => {
-  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.clearRect(0, 0, canvasWidth, canvasHeight);
   context.fillStyle = '#0b1020';
-  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillRect(0, 0, canvasWidth, canvasHeight);
 
   context.save();
-  context.translate(canvas.width / 2, 80);
+  context.translate(canvasWidth / 2, 0);
 
   for (const circle of circles) {
     const position = circle.body.GetPosition();
