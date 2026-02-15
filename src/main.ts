@@ -13,8 +13,8 @@ const TIME_STEP = 1 / 60;
 const STEP_CONFIG = { velocityIterations: 8, positionIterations: 3 } as const;
 const SPAWN_INTERVAL_MS = 500;
 const MAX_DEVICE_PIXEL_RATIO = 2;
-const MIN_WORLD_WIDTH_METERS = 12;
-const SIDE_PADDING_PX = 24;
+const MIN_WORLD_WIDTH_METERS = 0;
+const SIDE_PADDING_PX = 0;
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) {

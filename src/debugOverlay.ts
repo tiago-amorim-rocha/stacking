@@ -189,18 +189,6 @@ const injectUi = (): void => {
   root.id = 'debug-console-root';
   root.innerHTML = `
     <style>
-      #console-version-label {
-        position: fixed;
-        left: 12px;
-        top: calc(12px + env(safe-area-inset-top));
-        z-index: 1000;
-        padding: 8px 10px;
-        border-radius: 8px;
-        background: rgb(8 12 22 / 82%);
-        color: #d1fae5;
-        border: 1px solid rgb(52 211 153 / 35%);
-        font: 600 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
-      }
       #console-toggle {
         position: fixed;
         right: 12px;
@@ -228,6 +216,15 @@ const injectUi = (): void => {
         font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
       }
       .console-toolbar { display: flex; align-items: center; gap: 6px; }
+      #console-version-text {
+        margin-right: 4px;
+        padding: 4px 6px;
+        border-radius: 6px;
+        background: rgb(8 12 22 / 82%);
+        color: #d1fae5;
+        border: 1px solid rgb(52 211 153 / 35%);
+        font: 600 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
       .console-toolbar button {
         border: 0;
         border-radius: 6px;
@@ -243,10 +240,10 @@ const injectUi = (): void => {
       .console-warn { color: #fbbf24; }
       .console-error { color: #f87171; }
     </style>
-    <div id="console-version-label"><span id="console-version-text">📦 loading…</span></div>
     <button id="console-toggle" type="button" aria-label="Toggle debug console">🐛</button>
     <section id="console-panel">
       <div class="console-toolbar">
+        <span id="console-version-text">📦 loading…</span>
         <button type="button" data-level="log">Log</button>
         <button type="button" data-level="warn">Warn</button>
         <button type="button" data-level="error">Error</button>
