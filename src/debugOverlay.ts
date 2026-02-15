@@ -16,12 +16,6 @@ const MAX_MESSAGES = 200;
 let isOpen = false;
 const messages: { type: ConsoleLevel; text: string; time: string }[] = [];
 
-const levels: Record<ConsoleLevel, boolean> = {
-  log: true,
-  warn: true,
-  error: true,
-};
-
 const originalLog = console.log;
 const originalInfo = console.info;
 const originalDebug = console.debug;
@@ -29,7 +23,6 @@ const originalWarn = console.warn;
 const originalError = console.error;
 
 let output: HTMLDivElement | null = null;
-let levelStatus: HTMLSpanElement | null = null;
 let versionLabel: HTMLSpanElement | null = null;
 let currentVersion: VersionInfo | null = null;
 let checkCounter = 0;
@@ -68,14 +61,10 @@ const addMessage = (type: ConsoleLevel, args: unknown[]): void => {
   }
 };
 
-const filteredMessages = (): { type: ConsoleLevel; text: string; time: string }[] => {
-  return messages.filter((msg) => levels[msg.type]);
-};
-
 const renderMessages = (): void => {
   if (!output) return;
 
-  const visibleMessages = filteredMessages();
+  const visibleMessages = messages;
   output.innerHTML = visibleMessages
     .map(
       (msg) => `
@@ -89,18 +78,6 @@ const renderMessages = (): void => {
 
   output.scrollTop = output.scrollHeight;
 
-  if (levelStatus) {
-    levelStatus.textContent = `Showing ${visibleMessages.length}/${messages.length}`;
-  }
-};
-
-const toggleLevel = (level: ConsoleLevel): void => {
-  levels[level] = !levels[level];
-  const btn = document.querySelector<HTMLButtonElement>(`[data-level="${level}"]`);
-  if (btn) {
-    btn.classList.toggle('active', levels[level]);
-  }
-  renderMessages();
 };
 
 const formatVersion = (version: VersionInfo | null): string => {
@@ -275,8 +252,6 @@ const injectUi = (): void => {
         background: #374151;
         color: #f9fafb;
       }
-      .console-toolbar button.active { background: #059669; }
-      #console-level-status { margin-left: auto; color: #94a3b8; }
       #console-output { overflow: auto; white-space: pre-wrap; word-break: break-word; }
       .console-message { padding: 2px 0; }
       .console-time { color: #94a3b8; margin-right: 6px; }
@@ -287,11 +262,8 @@ const injectUi = (): void => {
     <section id="console-panel">
       <div class="console-toolbar">
         <span id="console-version-text">📦 loading…</span>
-        <button type="button" data-level="log">Log</button>
-        <button type="button" data-level="warn">Warn</button>
-        <button type="button" data-level="error">Error</button>
         <button id="console-clear" type="button">Clear</button>
-        <span id="console-level-status"></span>
+        <button id="console-copy" type="button">Copy</button>
       </div>
       <div id="console-output"></div>
     </section>
@@ -307,22 +279,13 @@ export const initDebugOverlay = (): void => {
   const panel = document.getElementById('console-panel');
   output = document.getElementById('console-output') as HTMLDivElement | null;
   const clear = document.getElementById('console-clear');
-  levelStatus = document.getElementById('console-level-status') as HTMLSpanElement | null;
+  const copy = document.getElementById('console-copy');
   versionLabel = document.getElementById('console-version-text') as HTMLSpanElement | null;
 
-  if (!toggle || !panel || !output || !clear) {
+  if (!toggle || !panel || !output || !clear || !copy) {
     originalWarn('Debug console UI not found; skipping initialization');
     return;
   }
-
-  const levelButtons = document.querySelectorAll<HTMLButtonElement>('[data-level]');
-  levelButtons.forEach((button) => {
-    button.classList.add('active');
-    button.addEventListener('click', () => {
-      const level = button.getAttribute('data-level') as ConsoleLevel | null;
-      if (level) toggleLevel(level);
-    });
-  });
 
   toggle.addEventListener('click', () => {
     isOpen = !isOpen;
@@ -337,6 +300,24 @@ export const initDebugOverlay = (): void => {
   clear.addEventListener('click', () => {
     messages.length = 0;
     renderMessages();
+  });
+
+  copy.addEventListener('click', async () => {
+    const text = messages
+      .map((msg) => `[${msg.time}] [${msg.type.toUpperCase()}] ${msg.text}`)
+      .join('\n');
+
+    if (!text) {
+      console.log('ℹ️ Nothing to copy from debug console.');
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(text);
+      console.log(`📋 Copied ${messages.length} console messages to clipboard.`);
+    } catch (error) {
+      console.warn('Unable to copy console output to clipboard.', error);
+    }
   });
 
   interceptConsole();
