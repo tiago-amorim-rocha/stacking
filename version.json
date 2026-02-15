@@ -1,7 +1,7 @@
 {
-  "timestamp": 1771172544603,
-  "date": "2026-02-15T16:22:24Z",
-  "buildId": "fc43c03d90cc8959",
-  "gitHash": "05467be",
-  "commitMessage": "Add on-screen circle count"
+  "timestamp": 1771174618008,
+  "date": "2026-02-15T16:56:58Z",
+  "buildId": "b592577df3af5dd5",
+  "gitHash": "b2e2703",
+  "commitMessage": "docs: clarify direct-to-main and PAT permissions for codex"
 }
