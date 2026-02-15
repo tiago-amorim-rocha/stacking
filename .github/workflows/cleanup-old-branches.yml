@@ -1,4 +1,4 @@
-name: Cleanup old Claude branches
+name: Cleanup old automation branches
 
 on:
   schedule:
@@ -20,18 +20,18 @@ jobs:
 
       - name: Delete old claude branches
         run: |
-          echo "Finding claude/** branches older than 24 hours..."
+          echo "Finding codex/** and claude/** branches older than 24 hours..."
 
           # Get current time in seconds since epoch
           NOW=$(date +%s)
           CUTOFF=$((NOW - 86400)) # 24 hours ago
 
-          # Get all remote claude branches
+          # Get all remote automation branches
           git fetch origin
-          BRANCHES=$(git branch -r | grep 'origin/claude/' | sed 's/origin\///' | grep -v HEAD || true)
+          BRANCHES=$(git branch -r | grep -E 'origin/(codex|claude)/' | sed 's/origin\///' | grep -v HEAD || true)
 
           if [ -z "$BRANCHES" ]; then
-            echo "No claude/** branches found"
+            echo "No codex/** or claude/** branches found"
             exit 0
           fi
 
