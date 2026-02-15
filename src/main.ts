@@ -101,6 +101,7 @@ const render = () => {
   context.fillStyle = 'white';
   context.font = '16px system-ui';
   context.fillText('Box2D + TypeScript playground', 20, 32);
+  context.fillText(`Circles: ${circles.length}`, 20, 56);
 };
 
 const tick = (timestamp: number) => {
