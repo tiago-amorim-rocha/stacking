@@ -40,6 +40,7 @@ initDebugOverlay();
 
 const world = b2World.Create(new b2Vec2(0, 10));
 type FallingShape = {
+  id: string;
   body: ReturnType<typeof world.CreateBody>;
   color: string;
   vertices: b2Vec2[];
@@ -61,13 +62,24 @@ type PlacementState = {
 };
 
 type GestureState = {
+  target: 'placement' | 'world';
   pointerA: number;
   pointerB: number;
-  initialMid: b2Vec2;
   initialAngle: number;
-  pieceInitialPosition: b2Vec2;
-  pieceInitialAngle: number;
+  objectInitialPosition: b2Vec2;
+  objectInitialAngle: number;
 };
+
+type WorldManipulationState = {
+  shape: FallingShape;
+  activePointerId: number | null;
+  pointerOffset: b2Vec2;
+};
+
+type SelectedObject =
+  | { kind: 'placement'; id: string }
+  | { kind: 'draft'; id: string }
+  | { kind: 'world'; id: string };
 
 type DraftPiece = {
   id: string;
@@ -100,10 +112,13 @@ let palette: Array<PieceTemplate | undefined> = [];
 let paletteCards: PieceCardLayout[] = [];
 let applyButtonRect = { x: 0, y: 0, width: APPLY_BUTTON_SIZE_PX, height: APPLY_BUTTON_SIZE_PX };
 let placement: PlacementState | undefined;
+let worldManipulation: WorldManipulationState | undefined;
 let gesture: GestureState | undefined;
 let drafts: DraftPiece[] = [];
+let selectedObject: SelectedObject | undefined;
 let pieceCounter = 0;
 let draftCounter = 0;
+let worldShapeCounter = 0;
 
 const randomColor = () => `hsl(${Math.floor(Math.random() * 360)} 85% 65%)`;
 
@@ -147,8 +162,8 @@ const isPointInPolygon = (point: b2Vec2, vertices: b2Vec2[]) => {
   return inside;
 };
 
-const createOrganicLongShape = () => {
-  const length = 1.8 + Math.random() * 1.8;
+const createLongOrganicShape = () => {
+  const length = 1.4 + Math.random() * 2.6;
   const halfLength = length / 2;
 
   const topLeft = 0.16 + Math.random() * 0.2;
@@ -169,11 +184,50 @@ const createOrganicLongShape = () => {
   ];
 };
 
+const createSquarishShape = () => {
+  const width = 0.8 + Math.random() * 1.8;
+  const height = 0.8 + Math.random() * 1.8;
+  const chamfer = Math.min(width, height) * (0.12 + Math.random() * 0.2);
+  const hw = width / 2;
+  const hh = height / 2;
+  return [
+    new b2Vec2(-hw + chamfer, -hh),
+    new b2Vec2(hw - chamfer, -hh),
+    new b2Vec2(hw, -hh + chamfer),
+    new b2Vec2(hw, hh - chamfer),
+    new b2Vec2(hw - chamfer, hh),
+    new b2Vec2(-hw + chamfer, hh),
+    new b2Vec2(-hw, hh - chamfer),
+    new b2Vec2(-hw, -hh + chamfer),
+  ];
+};
+
+const createAsymmetricBlock = () => {
+  const width = 1 + Math.random() * 1.8;
+  const height = 0.7 + Math.random() * 1.3;
+  const hw = width / 2;
+  const hh = height / 2;
+  const notch = 0.18 + Math.random() * 0.3;
+  return [
+    new b2Vec2(-hw, -hh),
+    new b2Vec2(hw, -hh * (0.65 + Math.random() * 0.25)),
+    new b2Vec2(hw * (0.7 + Math.random() * 0.2), hh),
+    new b2Vec2(-hw * (0.15 + notch), hh * (0.72 + Math.random() * 0.2)),
+    new b2Vec2(-hw, hh * (0.2 + Math.random() * 0.25)),
+  ];
+};
+
+const scaleVertices = (vertices: b2Vec2[], scaleX: number, scaleY: number) => vertices.map((vertex) => new b2Vec2(vertex.x * scaleX, vertex.y * scaleY));
+
 const createTemplate = (): PieceTemplate => {
   pieceCounter += 1;
+  const shapeBuilders = [createLongOrganicShape, createSquarishShape, createAsymmetricBlock, createSquarishShape];
+  const chosenShape = shapeBuilders[Math.floor(Math.random() * shapeBuilders.length)]();
+  const scaleX = 0.72 + Math.random() * 1.45;
+  const scaleY = 0.72 + Math.random() * 1.45;
   return {
     id: `piece-${pieceCounter}`,
-    vertices: createOrganicLongShape(),
+    vertices: scaleVertices(chosenShape, scaleX, scaleY),
     color: randomColor(),
   };
 };
@@ -279,7 +333,10 @@ const spawnPlacedShape = (template: PieceTemplate, position: b2Vec2, angle: numb
     restitution: 0.15,
   });
 
+  worldShapeCounter += 1;
+
   shapes.push({
+    id: `world-shape-${worldShapeCounter}`,
     body,
     color: template.color,
     vertices: template.vertices,
@@ -319,6 +376,13 @@ const renderWorld = () => {
     context.fillStyle = shape.color;
     drawPolygon(worldVertices);
     context.fill();
+
+    if (selectedObject?.kind === 'world' && selectedObject.id === shape.id) {
+      context.strokeStyle = '#ffffff';
+      context.lineWidth = 3;
+      drawPolygon(worldVertices);
+      context.stroke();
+    }
   }
 
   for (const draft of drafts) {
@@ -331,6 +395,13 @@ const renderWorld = () => {
     context.lineWidth = 2;
     drawPolygon(previewVertices);
     context.stroke();
+
+    if (selectedObject?.kind === 'draft' && selectedObject.id === draft.id) {
+      context.strokeStyle = '#fff';
+      context.lineWidth = 4;
+      drawPolygon(previewVertices);
+      context.stroke();
+    }
   }
 
   if (placement) {
@@ -343,6 +414,13 @@ const renderWorld = () => {
     context.lineWidth = 2;
     drawPolygon(previewVertices);
     context.stroke();
+
+    if (selectedObject?.kind === 'placement' && selectedObject.id === placement.draftId) {
+      context.strokeStyle = '#fff';
+      context.lineWidth = 4;
+      drawPolygon(previewVertices);
+      context.stroke();
+    }
   }
 
   context.strokeStyle = '#8fa5ff88';
@@ -471,6 +549,18 @@ const draftAtPoint = (point: b2Vec2) => {
   return undefined;
 };
 
+const worldShapeAtPoint = (point: b2Vec2) => {
+  for (let i = shapes.length - 1; i >= 0; i -= 1) {
+    const shape = shapes[i];
+    const vertices = transformedVertices(shape.vertices, shape.body.GetPosition(), shape.body.GetAngle());
+    if (isPointInPolygon(point, vertices)) {
+      return shape;
+    }
+  }
+
+  return undefined;
+};
+
 const beginPlacement = (template: PieceTemplate, pointerId: number, pointerWorld: b2Vec2, pointerOffset: b2Vec2, angle = 0, draftId?: string) => {
   if (!draftId) {
     draftCounter += 1;
@@ -484,6 +574,7 @@ const beginPlacement = (template: PieceTemplate, pointerId: number, pointerWorld
     pointerOffset,
     draftId: draftId ?? `draft-${draftCounter}`,
   };
+  selectedObject = { kind: 'placement', id: placement.draftId };
 };
 
 const commitActivePlacementToDraft = () => {
@@ -491,8 +582,10 @@ const commitActivePlacementToDraft = () => {
     return;
   }
 
+  const draftId = placement.draftId;
+
   drafts.push({
-    id: placement.draftId,
+    id: draftId,
     template: placement.template,
     position: placement.position,
     angle: placement.angle,
@@ -500,10 +593,74 @@ const commitActivePlacementToDraft = () => {
 
   placement = undefined;
   gesture = undefined;
+  selectedObject = { kind: 'draft', id: draftId };
+};
+
+const beginWorldManipulation = (shape: FallingShape, pointerId: number, pointerWorld: b2Vec2) => {
+  const shapePosition = shape.body.GetPosition();
+  shape.body.SetAwake(true);
+  shape.body.SetLinearVelocity(new b2Vec2(0, 0));
+  shape.body.SetAngularVelocity(0);
+
+  worldManipulation = {
+    shape,
+    activePointerId: pointerId,
+    pointerOffset: new b2Vec2(pointerWorld.x - shapePosition.x, pointerWorld.y - shapePosition.y),
+  };
+  selectedObject = { kind: 'world', id: shape.id };
+};
+
+const currentManipulationTarget = () => {
+  if (placement) {
+    return {
+      kind: 'placement' as const,
+      getPosition: () => placement!.position,
+      getAngle: () => placement!.angle,
+      setPosition: (position: b2Vec2) => {
+        placement!.position = position;
+      },
+      setAngle: (angle: number) => {
+        placement!.angle = angle;
+      },
+      activePointerId: placement.activePointerId,
+      pointerOffset: placement.pointerOffset,
+      setActivePointerId: (pointerId: number | null) => {
+        placement!.activePointerId = pointerId;
+      },
+      setPointerOffset: (offset: b2Vec2) => {
+        placement!.pointerOffset = offset;
+      },
+    };
+  }
+
+  if (worldManipulation) {
+    return {
+      kind: 'world' as const,
+      getPosition: () => worldManipulation!.shape.body.GetPosition(),
+      getAngle: () => worldManipulation!.shape.body.GetAngle(),
+      setPosition: (position: b2Vec2) => {
+        worldManipulation!.shape.body.SetTransformVec(position, worldManipulation!.shape.body.GetAngle());
+      },
+      setAngle: (angle: number) => {
+        worldManipulation!.shape.body.SetTransformVec(worldManipulation!.shape.body.GetPosition(), angle);
+      },
+      activePointerId: worldManipulation.activePointerId,
+      pointerOffset: worldManipulation.pointerOffset,
+      setActivePointerId: (pointerId: number | null) => {
+        worldManipulation!.activePointerId = pointerId;
+      },
+      setPointerOffset: (offset: b2Vec2) => {
+        worldManipulation!.pointerOffset = offset;
+      },
+    };
+  }
+
+  return undefined;
 };
 
 const tryStartGesture = () => {
-  if (!placement || activePointers.size < 2) {
+  const target = currentManipulationTarget();
+  if (!target || activePointers.size < 2) {
     return;
   }
 
@@ -511,21 +668,21 @@ const tryStartGesture = () => {
   const [pointerA, pointA] = entries[0];
   const [pointerB, pointB] = entries[1];
 
-  const mid = new b2Vec2((pointA.x + pointB.x) / 2, (pointA.y + pointB.y) / 2);
   const angle = Math.atan2(pointB.y - pointA.y, pointB.x - pointA.x);
 
   gesture = {
+    target: target.kind,
     pointerA,
     pointerB,
-    initialMid: mid,
     initialAngle: angle,
-    pieceInitialPosition: new b2Vec2(placement.position.x, placement.position.y),
-    pieceInitialAngle: placement.angle,
+    objectInitialPosition: target.getPosition(),
+    objectInitialAngle: target.getAngle(),
   };
 };
 
 const updatePlacementFromPointers = () => {
-  if (!placement) {
+  const target = currentManipulationTarget();
+  if (!target) {
     return;
   }
 
@@ -537,24 +694,20 @@ const updatePlacementFromPointers = () => {
       return;
     }
 
-    const currentMid = new b2Vec2((pointA.x + pointB.x) / 2, (pointA.y + pointB.y) / 2);
     const currentAngle = Math.atan2(pointB.y - pointA.y, pointB.x - pointA.x);
     const angleDelta = currentAngle - gesture.initialAngle;
 
-    placement.position = new b2Vec2(
-      gesture.pieceInitialPosition.x + (currentMid.x - gesture.initialMid.x),
-      gesture.pieceInitialPosition.y + (currentMid.y - gesture.initialMid.y),
-    );
-    placement.angle = gesture.pieceInitialAngle + angleDelta;
+    target.setPosition(gesture.objectInitialPosition);
+    target.setAngle(gesture.objectInitialAngle + angleDelta);
     return;
   }
 
-  if (placement.activePointerId !== null) {
-    const pointerPoint = activePointers.get(placement.activePointerId);
+  if (target.activePointerId !== null) {
+    const pointerPoint = activePointers.get(target.activePointerId);
     if (!pointerPoint) {
       return;
     }
-    placement.position = new b2Vec2(pointerPoint.x - placement.pointerOffset.x, pointerPoint.y - placement.pointerOffset.y);
+    target.setPosition(new b2Vec2(pointerPoint.x - target.pointerOffset.x, pointerPoint.y - target.pointerOffset.y));
   }
 };
 
@@ -572,6 +725,7 @@ const applyDrafts = () => {
   }
 
   drafts = [];
+  selectedObject = undefined;
   refillPalette();
   rebuildMenuLayout();
 };
@@ -591,7 +745,7 @@ canvas.addEventListener('pointerdown', (event) => {
 
   activePointers.set(event.pointerId, worldPoint);
 
-  if (!placement) {
+  if (!placement && !worldManipulation) {
     const card = cardAtPoint(x, y);
     if (card?.template) {
       beginPlacement(card.template, event.pointerId, worldPoint, new b2Vec2(0, 0));
@@ -616,17 +770,30 @@ canvas.addEventListener('pointerdown', (event) => {
       return;
     }
 
+    const existingShape = worldShapeAtPoint(worldPoint);
+    if (existingShape) {
+      beginWorldManipulation(existingShape, event.pointerId, worldPoint);
+      canvas.setPointerCapture(event.pointerId);
+      return;
+    }
+
     activePointers.delete(event.pointerId);
     return;
   }
 
-  if (placement.activePointerId === null) {
-    placement.activePointerId = event.pointerId;
-    placement.pointerOffset = new b2Vec2(worldPoint.x - placement.position.x, worldPoint.y - placement.position.y);
+  const target = currentManipulationTarget();
+  if (!target) {
+    return;
+  }
+
+  if (target.activePointerId === null) {
+    target.setActivePointerId(event.pointerId);
+    const position = target.getPosition();
+    target.setPointerOffset(new b2Vec2(worldPoint.x - position.x, worldPoint.y - position.y));
   }
 
   if (activePointers.size >= 2) {
-    placement.activePointerId = null;
+    target.setActivePointerId(null);
     tryStartGesture();
   }
 
@@ -645,7 +812,8 @@ canvas.addEventListener('pointermove', (event) => {
 const releasePointer = (pointerId: number) => {
   activePointers.delete(pointerId);
 
-  if (!placement) {
+  const target = currentManipulationTarget();
+  if (!target) {
     gesture = undefined;
     return;
   }
@@ -655,25 +823,29 @@ const releasePointer = (pointerId: number) => {
 
     const remaining = [...activePointers.keys()][0];
     if (remaining !== undefined) {
-      placement.activePointerId = remaining;
+      target.setActivePointerId(remaining);
       const point = activePointers.get(remaining);
       if (point) {
-        placement.pointerOffset = new b2Vec2(point.x - placement.position.x, point.y - placement.position.y);
+        const position = target.getPosition();
+        target.setPointerOffset(new b2Vec2(point.x - position.x, point.y - position.y));
       }
     } else {
-      placement.activePointerId = null;
+      target.setActivePointerId(null);
     }
-  } else if (placement.activePointerId === pointerId) {
-    placement.activePointerId = null;
+  } else if (target.activePointerId === pointerId) {
+    target.setActivePointerId(null);
   }
 
   if (!gesture && activePointers.size >= 2) {
-    placement.activePointerId = null;
+    target.setActivePointerId(null);
     tryStartGesture();
   }
 
   if (activePointers.size === 0) {
-    commitActivePlacementToDraft();
+    if (placement) {
+      commitActivePlacementToDraft();
+    }
+    worldManipulation = undefined;
   }
 };
 
@@ -686,7 +858,7 @@ canvas.addEventListener('pointercancel', (event) => {
 });
 
 const tick = () => {
-  const physicsPaused = Boolean(placement) || drafts.length > 0;
+  const physicsPaused = Boolean(placement) || Boolean(worldManipulation) || drafts.length > 0;
   if (!physicsPaused) {
     world.Step(TIME_STEP, STEP_CONFIG);
   }
