@@ -19,6 +19,7 @@ const MENU_PADDING_PX = 16;
 const MENU_GAP_PX = 12;
 const APPLY_BUTTON_SIZE_PX = 64;
 const MENU_PREVIEW_WORLD_SCALE = 1;
+const WHEEL_ROTATION_STEP_RAD = Math.PI / 18;
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) {
@@ -580,6 +581,15 @@ const worldShapeAtPoint = (point: b2Vec2) => {
   return undefined;
 };
 
+const rotateTargetBy = (target: TransformTarget, deltaRadians: number) => {
+  target.setAngle(target.getAngle() + deltaRadians);
+
+  if (target.selected.kind === 'world') {
+    const shape = shapes.find((candidate) => candidate.id === target.selected.id);
+    shape?.body.SetAwake(true);
+  }
+};
+
 const beginPlacement = (template: PieceTemplate, pointerId: number, pointerWorld: b2Vec2, pointerOffset: b2Vec2, angle = 0, draftId?: string) => {
   if (!draftId) {
     draftCounter += 1;
@@ -963,6 +973,34 @@ canvas.addEventListener('pointermove', (event) => {
   activePointers.set(event.pointerId, toWorldFromCanvas(event.clientX, event.clientY));
   updatePlacementFromPointers();
 });
+
+canvas.addEventListener('wheel', (event) => {
+  const direction = event.deltaY > 0 ? 1 : -1;
+  const rotationDelta = direction * WHEEL_ROTATION_STEP_RAD;
+
+  let target = currentManipulationTarget() ?? selectedTarget();
+  if (!target) {
+    const worldPoint = toWorldFromCanvas(event.clientX, event.clientY);
+    const draft = draftAtPoint(worldPoint);
+    if (draft) {
+      selectedObject = { kind: 'draft', id: draft.id };
+      target = selectedTarget();
+    } else {
+      const shape = worldShapeAtPoint(worldPoint);
+      if (shape) {
+        selectedObject = { kind: 'world', id: shape.id };
+        target = selectedTarget();
+      }
+    }
+  }
+
+  if (!target) {
+    return;
+  }
+
+  rotateTargetBy(target, rotationDelta);
+  event.preventDefault();
+}, { passive: false });
 
 const releasePointer = (pointerId: number) => {
   activePointers.delete(pointerId);
