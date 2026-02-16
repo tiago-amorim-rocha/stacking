@@ -18,6 +18,7 @@ const MENU_HEIGHT_PX = 160;
 const MENU_PADDING_PX = 16;
 const MENU_GAP_PX = 12;
 const APPLY_BUTTON_SIZE_PX = 64;
+const MENU_PREVIEW_WORLD_SCALE = 1;
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) {
@@ -176,7 +177,7 @@ const normalizeVerticesArea = (vertices: b2Vec2[], targetArea: number) => {
 
 const createLongOrganicShape = () => {
   const length = 2.2 + Math.random() * 1.5;
-  const thickness = 0.35 + Math.random() * 0.45;
+  const thickness = 0.24 + Math.random() * 0.44;
   const halfLength = length / 2;
   const topTilt = 0.08 + Math.random() * 0.25;
   const bottomTilt = 0.1 + Math.random() * 0.22;
@@ -189,6 +190,24 @@ const createLongOrganicShape = () => {
     new b2Vec2(halfLength * (0.72 + Math.random() * 0.18), thickness * (0.7 + bottomTilt)),
     new b2Vec2(-halfLength * (0.12 + Math.random() * 0.25), thickness * (1.0 + Math.random() * 0.2)),
     new b2Vec2(-halfLength * (0.94 + Math.random() * 0.12), thickness * (0.58 + Math.random() * 0.28)),
+  ];
+};
+
+const createUltraLongOrganicShape = () => {
+  const length = 3.5 + Math.random() * 2.6;
+  const thickness = 0.1 + Math.random() * 0.16;
+  const halfLength = length / 2;
+  const topTilt = 0.08 + Math.random() * 0.28;
+  const bottomTilt = 0.08 + Math.random() * 0.26;
+
+  return [
+    new b2Vec2(-halfLength * (0.98 + Math.random() * 0.1), -thickness * (0.58 + Math.random() * 0.24)),
+    new b2Vec2(-halfLength * (0.4 + Math.random() * 0.18), -thickness * (1.0 + topTilt)),
+    new b2Vec2(halfLength * (0.36 + Math.random() * 0.16), -thickness * (0.8 + Math.random() * 0.2)),
+    new b2Vec2(halfLength * (0.98 + Math.random() * 0.08), -thickness * (0.12 + Math.random() * 0.2)),
+    new b2Vec2(halfLength * (0.7 + Math.random() * 0.16), thickness * (0.72 + bottomTilt)),
+    new b2Vec2(-halfLength * (0.15 + Math.random() * 0.2), thickness * (0.98 + Math.random() * 0.2)),
+    new b2Vec2(-halfLength * (0.96 + Math.random() * 0.1), thickness * (0.6 + Math.random() * 0.24)),
   ];
 };
 
@@ -230,6 +249,10 @@ const createRoundedTriShape = () => {
 const createTemplate = (): PieceTemplate => {
   pieceCounter += 1;
   const shapeBuilders = [
+    createUltraLongOrganicShape,
+    createUltraLongOrganicShape,
+    createUltraLongOrganicShape,
+    createLongOrganicShape,
     createLongOrganicShape,
     createLongOrganicShape,
     createLongOrganicShape,
@@ -449,25 +472,6 @@ const renderWorld = () => {
   context.restore();
 };
 
-const fitTemplateToCardScale = (template: PieceTemplate, maxWidth: number, maxHeight: number) => {
-  let minX = Number.POSITIVE_INFINITY;
-  let maxX = Number.NEGATIVE_INFINITY;
-  let minY = Number.POSITIVE_INFINITY;
-  let maxY = Number.NEGATIVE_INFINITY;
-
-  for (const v of template.vertices) {
-    minX = Math.min(minX, v.x);
-    maxX = Math.max(maxX, v.x);
-    minY = Math.min(minY, v.y);
-    maxY = Math.max(maxY, v.y);
-  }
-
-  const width = Math.max(0.1, maxX - minX);
-  const height = Math.max(0.1, maxY - minY);
-
-  return Math.min(maxWidth / (width * PHYSICS_SCALE), maxHeight / (height * PHYSICS_SCALE));
-};
-
 const renderMenu = () => {
   const menuTop = worldPixelHeight;
   context.fillStyle = '#141b2e';
@@ -517,11 +521,13 @@ const renderMenu = () => {
 
     const centerX = card.x + card.width / 2;
     const centerY = card.y + card.height / 2;
-    const scale = fitTemplateToCardScale(card.template, card.width * 0.7, card.height * 0.7);
 
     context.save();
+    context.beginPath();
+    context.rect(card.x + 4, card.y + 4, card.width - 8, card.height - 8);
+    context.clip();
     context.translate(centerX, centerY);
-    context.scale(scale, scale);
+    context.scale(MENU_PREVIEW_WORLD_SCALE, MENU_PREVIEW_WORLD_SCALE);
     context.fillStyle = card.template.color;
 
     context.beginPath();
