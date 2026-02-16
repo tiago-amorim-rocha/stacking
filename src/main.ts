@@ -19,7 +19,7 @@ const MENU_PADDING_PX = 16;
 const MENU_GAP_PX = 12;
 const APPLY_BUTTON_SIZE_PX = 64;
 const MENU_PREVIEW_WORLD_SCALE = 1;
-const WHEEL_ROTATION_STEP_RAD = Math.PI / 18;
+const WHEEL_ROTATION_STEP_RAD = Math.PI / 54;
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) {
