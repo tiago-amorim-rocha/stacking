@@ -229,7 +229,13 @@ const createRoundedTriShape = () => {
 
 const createTemplate = (): PieceTemplate => {
   pieceCounter += 1;
-  const shapeBuilders = [createLongOrganicShape, createSquarishOrganicShape, createSquarishOrganicShape, createRoundedTriShape];
+  const shapeBuilders = [
+    createLongOrganicShape,
+    createLongOrganicShape,
+    createLongOrganicShape,
+    createSquarishOrganicShape,
+    createRoundedTriShape,
+  ];
   const chosenShape = shapeBuilders[Math.floor(Math.random() * shapeBuilders.length)]();
   const normalizedVertices = normalizeVerticesArea(chosenShape, 1.35 + Math.random() * 0.22);
   return {
@@ -258,11 +264,11 @@ const rebuildBounds = () => {
   const floorHalfHeight = 0.5;
   const worldHeight = worldPixelHeight / PHYSICS_SCALE;
   worldHalfWidth = Math.max(MIN_WORLD_WIDTH_METERS / 2, canvasWidth / (2 * PHYSICS_SCALE) - SIDE_PADDING_PX / PHYSICS_SCALE);
-  worldFloorY = worldHeight - 1;
+  worldFloorY = worldHeight;
 
   floorBody = world.CreateBody({ type: b2BodyType.b2_staticBody });
   floorBody.CreateFixture({
-    shape: new b2PolygonShape().SetAsBox(worldHalfWidth + 4, floorHalfHeight, { x: 0, y: worldFloorY }, 0),
+    shape: new b2PolygonShape().SetAsBox(worldHalfWidth + 4, floorHalfHeight, { x: 0, y: worldFloorY + floorHalfHeight }, 0),
     friction: 0.7,
   });
 
