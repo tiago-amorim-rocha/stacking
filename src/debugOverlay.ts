@@ -65,17 +65,12 @@ const renderMessages = (): void => {
   const visibleMessages = messages;
   output.innerHTML = visibleMessages
     .map(
-      (msg) => `
-    <div class="console-message console-${msg.type}">
-      <span class="console-time">[${msg.time}]</span>
-      <span class="console-text">${escapeHtml(msg.text)}</span>
-    </div>
-  `,
+      (msg) =>
+        `<div class="console-message console-${msg.type}"><span class="console-time">[${msg.time}]</span><span class="console-text">${escapeHtml(msg.text)}</span></div>`,
     )
     .join('');
 
   output.scrollTop = output.scrollHeight;
-
 };
 
 const formatVersion = (version: VersionInfo | null): string => {
@@ -233,7 +228,8 @@ const injectUi = (): void => {
         background: #374151;
         color: #f9fafb;
       }
-      #console-output { overflow: auto; white-space: pre-wrap; word-break: break-word; }
+      #console-output { overflow: auto; white-space: normal; word-break: break-word; }
+      .console-text { white-space: pre-wrap; }
       .console-message { padding: 2px 0; }
       .console-time { color: #94a3b8; margin-right: 6px; }
       .console-warn { color: #fbbf24; }
