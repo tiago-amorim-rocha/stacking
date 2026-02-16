@@ -6,9 +6,5 @@
 
 ## Access and Permissions
 - The environment is configured with a PAT that grants Codex read/write access to this repository.
-- This includes read/write access to repository content and explicit **workflow read + edit rights** for GitHub Actions/workflows.
-- Codex can update files under `.github/workflows/` when needed.
-
-## Operational Expectation
-- Assume full read/write capabilities are available unless an explicit runtime error indicates otherwise.
-- After pushing, verify that remote `main` includes the new commit.
+- Assume full read/write capabilities are available unless an explicit runtime error indicates otherwise. 
+- This includes read/write access to repository content and explicit workflow read + edit rights for GitHub Actions/workflows.
