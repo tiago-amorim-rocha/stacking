@@ -2,7 +2,6 @@ import { initDebugOverlay } from './debugOverlay';
 
 import {
   b2BodyType,
-  b2CircleShape,
   b2PolygonShape,
   b2Vec2,
   b2World,
@@ -11,7 +10,7 @@ import {
 const PHYSICS_SCALE = 30;
 const TIME_STEP = 1 / 60;
 const STEP_CONFIG = { velocityIterations: 8, positionIterations: 3 } as const;
-const SPAWN_INTERVAL_MS = 500;
+const SPAWN_INTERVAL_MS = 5_000;
 const MAX_DEVICE_PIXEL_RATIO = 2;
 const MIN_WORLD_WIDTH_METERS = 0;
 const SIDE_PADDING_PX = 0;
@@ -36,7 +35,13 @@ initDebugOverlay();
 console.log('Debug overlay initialized');
 
 const world = b2World.Create(new b2Vec2(0, 10));
-const circles: { body: ReturnType<typeof world.CreateBody>; radius: number; color: string }[] = [];
+type FallingShape = {
+  body: ReturnType<typeof world.CreateBody>;
+  color: string;
+  vertices: b2Vec2[];
+};
+
+const shapes: FallingShape[] = [];
 
 let floorBody: ReturnType<typeof world.CreateBody> | undefined;
 let leftWallBody: ReturnType<typeof world.CreateBody> | undefined;
@@ -102,22 +107,48 @@ resize();
 
 const randomColor = () => `hsl(${Math.floor(Math.random() * 360)} 90% 65%)`;
 
-const spawnCircle = () => {
-  const radius = 0.25 + Math.random() * 0.45;
+const createOrganicLongShape = () => {
+  const length = 1.8 + Math.random() * 1.8;
+  const halfLength = length / 2;
+
+  // Independent top/bottom offsets avoid parallel edges and keep a hand-drawn look.
+  const topLeft = 0.16 + Math.random() * 0.2;
+  const topMiddle = 0.2 + Math.random() * 0.22;
+  const topRight = 0.15 + Math.random() * 0.22;
+
+  const bottomRight = 0.14 + Math.random() * 0.24;
+  const bottomMiddle = 0.2 + Math.random() * 0.22;
+  const bottomLeft = 0.17 + Math.random() * 0.2;
+
+  return [
+    new b2Vec2(-halfLength, -topLeft),
+    new b2Vec2(-halfLength * 0.22, -topMiddle),
+    new b2Vec2(halfLength, -topRight),
+    new b2Vec2(halfLength * 0.88, bottomRight),
+    new b2Vec2(halfLength * 0.08, bottomMiddle),
+    new b2Vec2(-halfLength * 0.94, bottomLeft),
+  ];
+};
+
+const spawnShape = () => {
+  const vertices = createOrganicLongShape();
   const body = world.CreateBody({
     type: b2BodyType.b2_dynamicBody,
     position: { x: -worldHalfWidth * 0.7 + Math.random() * worldHalfWidth * 1.4, y: worldTopPadding },
-    angularVelocity: Math.random() * 4 - 2,
+    angularVelocity: Math.random() * 2 - 1,
   });
+
+  const shape = new b2PolygonShape();
+  shape.Set(vertices, vertices.length);
 
   body.CreateFixture({
-    shape: new b2CircleShape(radius),
+    shape,
     density: 1,
-    friction: 0.25,
-    restitution: 0.4,
+    friction: 0.55,
+    restitution: 0.15,
   });
 
-  circles.push({ body, radius, color: randomColor() });
+  shapes.push({ body, vertices, color: randomColor() });
 };
 
 let previousSpawn = 0;
@@ -130,16 +161,25 @@ const render = () => {
   context.save();
   context.translate(canvasWidth / 2, 0);
 
-  for (const circle of circles) {
-    const position = circle.body.GetPosition();
-    const angle = circle.body.GetAngle();
+  for (const shape of shapes) {
+    const position = shape.body.GetPosition();
+    const angle = shape.body.GetAngle();
 
     context.save();
     context.translate(position.x * PHYSICS_SCALE, position.y * PHYSICS_SCALE);
     context.rotate(angle);
-    context.fillStyle = circle.color;
+    context.fillStyle = shape.color;
     context.beginPath();
-    context.arc(0, 0, circle.radius * PHYSICS_SCALE, 0, Math.PI * 2);
+    shape.vertices.forEach((vertex, index) => {
+      const x = vertex.x * PHYSICS_SCALE;
+      const y = vertex.y * PHYSICS_SCALE;
+      if (index === 0) {
+        context.moveTo(x, y);
+      } else {
+        context.lineTo(x, y);
+      }
+    });
+    context.closePath();
     context.fill();
     context.restore();
   }
@@ -148,21 +188,21 @@ const render = () => {
 
   context.fillStyle = 'white';
   context.font = '16px system-ui';
-  context.fillText('Box2D + TypeScript playground', 20, 32);
+  context.fillText('Organic shape stacker prototype', 20, 32);
 };
 
 const tick = (timestamp: number) => {
   if (!previousSpawn || timestamp - previousSpawn >= SPAWN_INTERVAL_MS) {
     previousSpawn = timestamp;
-    spawnCircle();
+    spawnShape();
   }
 
   world.Step(TIME_STEP, STEP_CONFIG);
 
-  if (circles.length > 100) {
-    const removed = circles.splice(0, circles.length - 100);
-    for (const circle of removed) {
-      world.DestroyBody(circle.body);
+  if (shapes.length > 100) {
+    const removed = shapes.splice(0, shapes.length - 100);
+    for (const shape of removed) {
+      world.DestroyBody(shape.body);
     }
   }
 
