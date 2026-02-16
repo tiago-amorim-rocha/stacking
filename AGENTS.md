@@ -14,7 +14,7 @@
 ### Overview
 - This repository is a Vite + TypeScript web game project named **Stacking**.
 - The runtime entrypoint is `src/main.ts` and the app uses `@box2d/core` for physics.
-- The app is intended to run well on mobile browsers (including iOS Safari and Add-to-Home-Screen usage).
+- The app is intended to run well on Add-to-Home-Screen usage, a.k.a PWA.
 
 ### Current Relevant Features
 - **iOS/PWA-oriented shell** in `index.html`:
@@ -27,6 +27,3 @@
 - **Version metadata + update checks**:
   - Runtime checks `version.json` to detect new deployments.
   - GitHub Pages workflow (`.github/workflows/deploy-pages.yml`) writes fresh `dist/version.json` and `dist/version.txt` during deploy.
-
-### Notes
-- Some files from earlier template iterations may still exist (for example top-level `main.js` / `console.js`), but active app code is in `src/` and built with Vite.
