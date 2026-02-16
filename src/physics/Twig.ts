@@ -2,6 +2,7 @@ import {
   b2Body,
   b2AngularStiffness,
   b2BodyType,
+  b2MassData,
   b2PolygonShape,
   b2Vec2,
   b2WeldJoint,
@@ -11,9 +12,10 @@ import {
 
 export type TwigTuning = {
   angleLimitDeg: number;
-  jointStiffness: number;
-  jointDamping: number;
+  weldStiffness: number;
+  weldDamping: number;
   angularDamping: number;
+  mass: number;
 };
 
 export type TwigSegmentTransform = {
@@ -30,9 +32,10 @@ export type TwigOptions = Partial<TwigTuning> & {
 
 export const DEFAULT_TWIG_TUNING: TwigTuning = {
   angleLimitDeg: 15,
-  jointStiffness: 8,
-  jointDamping: 2.4,
+  weldStiffness: 8,
+  weldDamping: 2.4,
   angularDamping: 1.8,
+  mass: 1,
 };
 
 const FIXTURE_THICKNESS_SCALE = 1.18;
@@ -87,7 +90,7 @@ export class Twig {
 
     const initialAngle = options.initialAngle ?? 0;
     const halfLength = this.totalLength / 2;
-    const segmentMass = 1 / this.segmentCount;
+    const segmentMass = Math.max(0.001, this.tuning.mass) / this.segmentCount;
     const fixtureArea = this.segmentLength * this.fixtureThickness;
     const density = segmentMass / Math.max(fixtureArea, 0.01);
 
@@ -141,8 +144,8 @@ export class Twig {
   }
 
   private computeWeldProfile() {
-    const userStiffness = Number.isFinite(this.tuning.jointStiffness) ? Math.max(0, this.tuning.jointStiffness) : 0;
-    const userDamping = Number.isFinite(this.tuning.jointDamping) ? Math.max(0, this.tuning.jointDamping) : 0;
+    const userStiffness = Number.isFinite(this.tuning.weldStiffness) ? Math.max(0, this.tuning.weldStiffness) : 0;
+    const userDamping = Number.isFinite(this.tuning.weldDamping) ? Math.max(0, this.tuning.weldDamping) : 0;
     const angleLimitDeg = clamp(Math.abs(this.tuning.angleLimitDeg), 0.1, MAX_ABS_ANGLE_LIMIT_DEG);
 
     // Smaller angle limits imply a stiffer beam, larger limits imply more flexibility.
@@ -155,11 +158,27 @@ export class Twig {
     };
   }
 
+  private applyMassDistribution() {
+    const totalMass = Number.isFinite(this.tuning.mass) ? Math.max(0.001, this.tuning.mass) : DEFAULT_TWIG_TUNING.mass;
+    const targetSegmentMass = totalMass / Math.max(1, this.bodies.length);
+
+    for (const body of this.bodies) {
+      const currentMass = Math.max(body.GetMass(), 0.0001);
+      const scale = targetSegmentMass / currentMass;
+      const massData = body.GetMassData(new b2MassData());
+      massData.mass = targetSegmentMass;
+      massData.I *= scale;
+      body.SetMassData(massData);
+      body.SetAwake(true);
+    }
+  }
+
   public setTuning(tuning: Partial<TwigTuning>) {
     this.tuning = {
       ...this.tuning,
       ...tuning,
     };
+    this.applyMassDistribution();
     const weldProfile = this.computeWeldProfile();
     for (const body of this.bodies) {
       body.SetAngularDamping(this.getSafeAngularDamping());
@@ -176,8 +195,8 @@ export class Twig {
 
   public updateSoftness(stepSeconds = DEFAULT_STEP_SECONDS) {
     const angleLimit = this.getSafeAngleLimitRadians();
-    const userStiffness = Number.isFinite(this.tuning.jointStiffness) ? Math.max(0, this.tuning.jointStiffness) : 0;
-    const userDamping = Number.isFinite(this.tuning.jointDamping) ? Math.max(0, this.tuning.jointDamping) : 0;
+    const userStiffness = Number.isFinite(this.tuning.weldStiffness) ? Math.max(0, this.tuning.weldStiffness) : 0;
+    const userDamping = Number.isFinite(this.tuning.weldDamping) ? Math.max(0, this.tuning.weldDamping) : 0;
     const limitSpring = clamp(userStiffness * 1.1 + 2, 2, 500);
     const limitDamping = clamp(userDamping * 0.7 + 0.2, 0.2, 120);
     const maxLimitTorque = clamp(0.4 + userStiffness * 0.6 + userDamping * 0.8, 0.4, 300);

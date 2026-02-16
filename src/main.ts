@@ -206,9 +206,10 @@ let undoSnapshot: UndoSnapshot | undefined;
 const TWIG_TUNING = {
   segmentCount: TWIG_DEFAULT_SEGMENT_COUNT,
   angleLimitDeg: DEFAULT_TWIG_TUNING.angleLimitDeg,
-  jointStiffness: DEFAULT_TWIG_TUNING.jointStiffness,
-  jointDamping: DEFAULT_TWIG_TUNING.jointDamping,
+  weldStiffness: DEFAULT_TWIG_TUNING.weldStiffness,
+  weldDamping: DEFAULT_TWIG_TUNING.weldDamping,
   angularDamping: DEFAULT_TWIG_TUNING.angularDamping,
+  mass: DEFAULT_TWIG_TUNING.mass,
 };
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -336,9 +337,10 @@ const applyTwigTuningToWorld = () => {
   for (const twigObject of twigs) {
     twigObject.tuning = {
       angleLimitDeg: TWIG_TUNING.angleLimitDeg,
-      jointStiffness: TWIG_TUNING.jointStiffness,
-      jointDamping: TWIG_TUNING.jointDamping,
+      weldStiffness: TWIG_TUNING.weldStiffness,
+      weldDamping: TWIG_TUNING.weldDamping,
       angularDamping: TWIG_TUNING.angularDamping,
+      mass: TWIG_TUNING.mass,
     };
     twigObject.twig.setTuning(twigObject.tuning);
   }
@@ -366,24 +368,24 @@ const angleLimitControl = addTuningControl(
 );
 
 const stiffnessControl = addTuningControl(
-  'Joint Stiffness',
+  'Weld Stiffness',
   0.01,
-  TWIG_TUNING.jointStiffness,
+  TWIG_TUNING.weldStiffness,
   (rawValue) => {
-    TWIG_TUNING.jointStiffness = rawValue;
+    TWIG_TUNING.weldStiffness = rawValue;
     applyTwigTuningToWorld();
-    return TWIG_TUNING.jointStiffness;
+    return TWIG_TUNING.weldStiffness;
   },
 );
 
 const dampingControl = addTuningControl(
-  'Joint Damping',
+  'Weld Damping',
   0.01,
-  TWIG_TUNING.jointDamping,
+  TWIG_TUNING.weldDamping,
   (rawValue) => {
-    TWIG_TUNING.jointDamping = rawValue;
+    TWIG_TUNING.weldDamping = rawValue;
     applyTwigTuningToWorld();
-    return TWIG_TUNING.jointDamping;
+    return TWIG_TUNING.weldDamping;
   },
 );
 
@@ -395,6 +397,17 @@ const angularDampingControl = addTuningControl(
     TWIG_TUNING.angularDamping = rawValue;
     applyTwigTuningToWorld();
     return TWIG_TUNING.angularDamping;
+  },
+);
+
+const massControl = addTuningControl(
+  'Twig Mass',
+  0.01,
+  TWIG_TUNING.mass,
+  (rawValue) => {
+    TWIG_TUNING.mass = Math.max(0.001, rawValue);
+    applyTwigTuningToWorld();
+    return TWIG_TUNING.mass;
   },
 );
 
@@ -452,9 +465,10 @@ closeButton.addEventListener('click', () => {
 resetButton.addEventListener('click', () => {
   segmentCountControl.input.value = String(TWIG_DEFAULT_SEGMENT_COUNT);
   angleLimitControl.input.value = String(DEFAULT_TWIG_TUNING.angleLimitDeg);
-  stiffnessControl.input.value = String(DEFAULT_TWIG_TUNING.jointStiffness);
-  dampingControl.input.value = String(DEFAULT_TWIG_TUNING.jointDamping);
+  stiffnessControl.input.value = String(DEFAULT_TWIG_TUNING.weldStiffness);
+  dampingControl.input.value = String(DEFAULT_TWIG_TUNING.weldDamping);
   angularDampingControl.input.value = String(DEFAULT_TWIG_TUNING.angularDamping);
+  massControl.input.value = String(DEFAULT_TWIG_TUNING.mass);
   refreshTuningLabels();
 });
 
@@ -741,9 +755,10 @@ const createTwigTemplate = (): TwigPieceTemplate => {
     segmentCount,
     tuning: {
       angleLimitDeg: TWIG_TUNING.angleLimitDeg,
-      jointStiffness: TWIG_TUNING.jointStiffness,
-      jointDamping: TWIG_TUNING.jointDamping,
+      weldStiffness: TWIG_TUNING.weldStiffness,
+      weldDamping: TWIG_TUNING.weldDamping,
       angularDamping: TWIG_TUNING.angularDamping,
+      mass: TWIG_TUNING.mass,
     },
   };
 };
