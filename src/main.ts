@@ -186,9 +186,6 @@ const render = () => {
 
   context.restore();
 
-  context.fillStyle = 'white';
-  context.font = '16px system-ui';
-  context.fillText('Organic shape stacker prototype', 20, 32);
 };
 
 const tick = (timestamp: number) => {
