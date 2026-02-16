@@ -157,6 +157,10 @@ const cloneDraft = (draft: DraftPiece): DraftPiece => ({
   angle: draft.angle,
 });
 
+const isPhysicsPaused = () => Boolean(placement) || Boolean(worldManipulation) || Boolean(gesture) || drafts.length > 0;
+
+const shouldShowUndoButton = () => Boolean(undoSnapshot) && !isPhysicsPaused();
+
 const randomColor = () => `hsl(${Math.floor(Math.random() * 360)} 85% 65%)`;
 
 const getPolygonArea = (vertices: b2Vec2[]) => {
@@ -604,7 +608,7 @@ const renderMenu = () => {
   context.stroke();
 
   const canApply = Boolean(placement) || drafts.length > 0;
-  const canUndo = Boolean(undoSnapshot);
+  const canUndo = shouldShowUndoButton();
   context.fillStyle = canUndo ? '#d68a2d' : canApply ? '#2dbf6e' : '#4c5a76';
   context.beginPath();
   context.arc(
@@ -1049,7 +1053,7 @@ canvas.addEventListener('pointerdown', (event) => {
   const worldPoint = toWorldFromCanvas(x, y);
 
   if (inRect(x, y, applyButtonRect)) {
-    if (undoSnapshot) {
+    if (shouldShowUndoButton()) {
       restoreUndoSnapshot();
     } else {
       applyDrafts();
@@ -1203,7 +1207,7 @@ canvas.addEventListener('pointercancel', (event) => {
 });
 
 const tick = () => {
-  const physicsPaused = Boolean(placement) || Boolean(worldManipulation) || Boolean(gesture) || drafts.length > 0;
+  const physicsPaused = isPhysicsPaused();
   if (!physicsPaused) {
     world.Step(TIME_STEP, STEP_CONFIG);
   }
