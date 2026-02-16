@@ -617,6 +617,48 @@ const beginWorldManipulation = (shape: FallingShape, pointerId: number, pointerW
   selectedObject = { kind: 'world', id: shape.id };
 };
 
+const beginSelectedObjectManipulation = (pointerId: number, pointerWorld: b2Vec2) => {
+  if (!selectedObject) {
+    return false;
+  }
+
+  if (selectedObject.kind === 'world') {
+    const shape = shapes.find((candidate) => candidate.id === selectedObject!.id);
+    if (!shape) {
+      return false;
+    }
+
+    beginWorldManipulation(shape, pointerId, pointerWorld);
+    return true;
+  }
+
+  if (selectedObject.kind === 'draft') {
+    const selectedDraft = drafts.find((candidate) => candidate.id === selectedObject!.id);
+    if (!selectedDraft) {
+      return false;
+    }
+
+    drafts = drafts.filter((draft) => draft.id !== selectedDraft.id);
+    beginPlacement(
+      selectedDraft.template,
+      pointerId,
+      pointerWorld,
+      new b2Vec2(pointerWorld.x - selectedDraft.position.x, pointerWorld.y - selectedDraft.position.y),
+      selectedDraft.angle,
+      selectedDraft.id,
+    );
+    return true;
+  }
+
+  if (selectedObject.kind === 'placement' && placement && placement.draftId === selectedObject.id) {
+    placement.activePointerId = pointerId;
+    placement.pointerOffset = new b2Vec2(pointerWorld.x - placement.position.x, pointerWorld.y - placement.position.y);
+    return true;
+  }
+
+  return false;
+};
+
 type TransformTarget = {
   selected: SelectedObject;
   getPosition: () => b2Vec2;
@@ -874,6 +916,11 @@ canvas.addEventListener('pointerdown', (event) => {
     const existingShape = worldShapeAtPoint(worldPoint);
     if (existingShape) {
       beginWorldManipulation(existingShape, event.pointerId, worldPoint);
+      canvas.setPointerCapture(event.pointerId);
+      return;
+    }
+
+    if (beginSelectedObjectManipulation(event.pointerId, worldPoint)) {
       canvas.setPointerCapture(event.pointerId);
       return;
     }
