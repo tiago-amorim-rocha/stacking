@@ -14,16 +14,17 @@ const MAX_DEVICE_PIXEL_RATIO = 2;
 const MIN_WORLD_WIDTH_METERS = 0;
 const SIDE_PADDING_PX = 0;
 const TARGET_SHAPE_MASS = 1;
-const MENU_HEIGHT_PX = 160;
+const MENU_HEIGHT_PX = 180;
 const MENU_PADDING_PX = 16;
 const MENU_GAP_PX = 12;
-const APPLY_BUTTON_WIDTH_PX = 120;
-const APPLY_BUTTON_HEIGHT_PX = 52;
+const MENU_CARD_CORNER_RADIUS = 14;
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) {
   throw new Error('Missing #app container');
 }
+
+app.style.position = 'relative';
 
 const canvas = document.createElement('canvas');
 const context = canvas.getContext('2d');
@@ -35,11 +36,29 @@ canvas.style.width = '100%';
 canvas.style.height = '100%';
 canvas.style.touchAction = 'none';
 
-app.append(canvas);
+const applyButton = document.createElement('button');
+applyButton.type = 'button';
+applyButton.textContent = 'Apply';
+applyButton.style.position = 'absolute';
+applyButton.style.right = '20px';
+applyButton.style.bottom = '20px';
+applyButton.style.height = '44px';
+applyButton.style.padding = '0 18px';
+applyButton.style.border = 'none';
+applyButton.style.borderRadius = '999px';
+applyButton.style.font = '600 15px system-ui';
+applyButton.style.cursor = 'pointer';
+applyButton.style.background = '#38bdf8';
+applyButton.style.color = '#04111f';
+applyButton.style.boxShadow = '0 8px 24px rgb(0 0 0 / 25%)';
+
+app.append(canvas, applyButton);
 
 initDebugOverlay();
+console.log('Debug overlay initialized');
 
 const world = b2World.Create(new b2Vec2(0, 10));
+
 type FallingShape = {
   body: ReturnType<typeof world.CreateBody>;
   color: string;
@@ -47,31 +66,25 @@ type FallingShape = {
 };
 
 type PieceTemplate = {
-  id: string;
   vertices: b2Vec2[];
   color: string;
+};
+
+type PointerSample = {
+  start: b2Vec2;
+  current: b2Vec2;
 };
 
 type PlacementState = {
   template: PieceTemplate;
   position: b2Vec2;
   angle: number;
-  activePointerId: number | null;
-  pointerOffset: b2Vec2;
+  pointers: Map<number, PointerSample>;
+  gestureBasePosition: b2Vec2;
+  gestureBaseAngle: number;
 };
 
-type GestureState = {
-  pointerA: number;
-  pointerB: number;
-  initialMid: b2Vec2;
-  initialAngle: number;
-  initialDistance: number;
-  pieceInitialPosition: b2Vec2;
-  pieceInitialAngle: number;
-};
-
-type PieceCardLayout = {
-  template: PieceTemplate;
+type Rect = {
   x: number;
   y: number;
   width: number;
@@ -79,24 +92,24 @@ type PieceCardLayout = {
 };
 
 const shapes: FallingShape[] = [];
-const activePointers = new Map<number, b2Vec2>();
+let menuTemplates: PieceTemplate[] = [];
 
 let floorBody: ReturnType<typeof world.CreateBody> | undefined;
 let leftWallBody: ReturnType<typeof world.CreateBody> | undefined;
 let rightWallBody: ReturnType<typeof world.CreateBody> | undefined;
 let canvasWidth = 0;
 let canvasHeight = 0;
-let worldPixelHeight = 0;
+let worldCanvasHeight = 0;
 let worldHalfWidth = MIN_WORLD_WIDTH_METERS / 2;
 let worldFloorY = 22;
-let palette: PieceTemplate[] = [];
-let paletteCards: PieceCardLayout[] = [];
-let applyButtonRect = { x: 0, y: 0, width: APPLY_BUTTON_WIDTH_PX, height: APPLY_BUTTON_HEIGHT_PX };
-let placement: PlacementState | undefined;
-let gesture: GestureState | undefined;
-let pieceCounter = 0;
+let worldTopPadding = 2;
+let placementState: PlacementState | undefined;
 
-const randomColor = () => `hsl(${Math.floor(Math.random() * 360)} 85% 65%)`;
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+const cloneVec2 = (value: b2Vec2) => new b2Vec2(value.x, value.y);
+
+const randomColor = () => `hsl(${Math.floor(Math.random() * 360)} 90% 65%)`;
 
 const getPolygonArea = (vertices: b2Vec2[]) => {
   let signedArea = 0;
@@ -109,12 +122,38 @@ const getPolygonArea = (vertices: b2Vec2[]) => {
   return Math.abs(signedArea) * 0.5;
 };
 
-const toWorldFromCanvas = (x: number, y: number) => new b2Vec2((x - canvasWidth / 2) / PHYSICS_SCALE, y / PHYSICS_SCALE);
+const toWorldFromCanvas = (x: number, y: number) => {
+  const clampedY = clamp(y, 0, worldCanvasHeight);
+  return new b2Vec2((x - canvasWidth / 2) / PHYSICS_SCALE, clampedY / PHYSICS_SCALE);
+};
+
+const toCanvasFromWorld = (x: number, y: number) => ({
+  x: x * PHYSICS_SCALE + canvasWidth / 2,
+  y: y * PHYSICS_SCALE,
+});
+
+const toLocalFromBody = (bodyPosition: b2Vec2, bodyAngle: number, worldPoint: b2Vec2) => {
+  const dx = worldPoint.x - bodyPosition.x;
+  const dy = worldPoint.y - bodyPosition.y;
+  const cos = Math.cos(bodyAngle);
+  const sin = Math.sin(bodyAngle);
+  return new b2Vec2(cos * dx + sin * dy, -sin * dx + cos * dy);
+};
+
+const toWorldFromBody = (bodyPosition: b2Vec2, bodyAngle: number, localPoint: b2Vec2) => {
+  const cos = Math.cos(bodyAngle);
+  const sin = Math.sin(bodyAngle);
+  return new b2Vec2(
+    bodyPosition.x + cos * localPoint.x - sin * localPoint.y,
+    bodyPosition.y + sin * localPoint.x + cos * localPoint.y,
+  );
+};
 
 const createOrganicLongShape = () => {
   const length = 1.8 + Math.random() * 1.8;
   const halfLength = length / 2;
 
+  // Independent top/bottom offsets avoid parallel edges and keep a hand-drawn look.
   const topLeft = 0.16 + Math.random() * 0.2;
   const topMiddle = 0.2 + Math.random() * 0.22;
   const topRight = 0.15 + Math.random() * 0.22;
@@ -133,18 +172,10 @@ const createOrganicLongShape = () => {
   ];
 };
 
-const createTemplate = (): PieceTemplate => {
-  pieceCounter += 1;
-  return {
-    id: `piece-${pieceCounter}`,
-    vertices: createOrganicLongShape(),
-    color: randomColor(),
-  };
-};
-
-const refillPalette = () => {
-  palette = [createTemplate(), createTemplate(), createTemplate()];
-};
+const createPieceTemplates = (count: number) => Array.from({ length: count }, () => ({
+  vertices: createOrganicLongShape(),
+  color: randomColor(),
+}));
 
 const rebuildBounds = () => {
   if (floorBody) {
@@ -159,9 +190,10 @@ const rebuildBounds = () => {
 
   const wallThickness = 0.5;
   const floorHalfHeight = 0.5;
-  const worldHeight = worldPixelHeight / PHYSICS_SCALE;
+  const worldHeight = worldCanvasHeight / PHYSICS_SCALE;
   worldHalfWidth = Math.max(MIN_WORLD_WIDTH_METERS / 2, canvasWidth / (2 * PHYSICS_SCALE) - SIDE_PADDING_PX / PHYSICS_SCALE);
-  worldFloorY = worldHeight - 1;
+  worldFloorY = worldHeight - 2;
+  worldTopPadding = 1.5;
 
   floorBody = world.CreateBody({ type: b2BodyType.b2_staticBody });
   floorBody.CreateFixture({
@@ -180,30 +212,6 @@ const rebuildBounds = () => {
   });
 };
 
-const rebuildMenuLayout = () => {
-  const menuTop = worldPixelHeight;
-  const contentY = menuTop + MENU_PADDING_PX;
-
-  applyButtonRect = {
-    x: canvasWidth - MENU_PADDING_PX - APPLY_BUTTON_WIDTH_PX,
-    y: contentY + 40,
-    width: APPLY_BUTTON_WIDTH_PX,
-    height: APPLY_BUTTON_HEIGHT_PX,
-  };
-
-  const cardsAvailableWidth = Math.max(120, applyButtonRect.x - MENU_PADDING_PX * 2 - MENU_GAP_PX * 2);
-  const cardWidth = cardsAvailableWidth / 3;
-  const cardHeight = MENU_HEIGHT_PX - MENU_PADDING_PX * 2;
-
-  paletteCards = palette.map((template, index) => ({
-    template,
-    x: MENU_PADDING_PX + index * (cardWidth + MENU_GAP_PX),
-    y: contentY,
-    width: cardWidth,
-    height: cardHeight,
-  }));
-};
-
 const resize = () => {
   const viewport = window.visualViewport;
   const width = Math.max(1, Math.round(viewport?.width ?? window.innerWidth));
@@ -212,74 +220,276 @@ const resize = () => {
 
   canvasWidth = width;
   canvasHeight = height;
-  worldPixelHeight = Math.max(120, canvasHeight - MENU_HEIGHT_PX);
+  worldCanvasHeight = Math.max(1, canvasHeight - MENU_HEIGHT_PX);
 
   canvas.width = Math.round(width * pixelRatio);
   canvas.height = Math.round(height * pixelRatio);
   context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-
   rebuildBounds();
-  rebuildMenuLayout();
 };
 
-const spawnPlacedShape = (template: PieceTemplate, position: b2Vec2, angle: number) => {
+const getCanvasPoint = (event: PointerEvent) => {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top,
+  };
+};
+
+const getMenuCards = (): Rect[] => {
+  const totalGap = MENU_GAP_PX * 2;
+  const availableWidth = canvasWidth - MENU_PADDING_PX * 2 - totalGap;
+  const cardWidth = Math.max(80, availableWidth / 3);
+  const cardHeight = MENU_HEIGHT_PX - MENU_PADDING_PX * 2;
+  const startX = MENU_PADDING_PX;
+  const y = worldCanvasHeight + MENU_PADDING_PX;
+
+  return [0, 1, 2].map((index) => ({
+    x: startX + index * (cardWidth + MENU_GAP_PX),
+    y,
+    width: cardWidth,
+    height: cardHeight,
+  }));
+};
+
+const isPointInRect = (x: number, y: number, rect: Rect) => (
+  x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height
+);
+
+const setApplyButtonEnabled = (enabled: boolean) => {
+  applyButton.disabled = !enabled;
+  applyButton.style.opacity = enabled ? '1' : '0.55';
+  applyButton.style.cursor = enabled ? 'pointer' : 'default';
+};
+
+const createDynamicBodyFromTemplate = (template: PieceTemplate, position: b2Vec2, angle: number) => {
   const body = world.CreateBody({
     type: b2BodyType.b2_dynamicBody,
     position,
     angle,
+    angularVelocity: Math.random() * 2 - 1,
   });
 
-  const polygon = new b2PolygonShape();
-  polygon.Set(template.vertices, template.vertices.length);
+  const shape = new b2PolygonShape();
+  shape.Set(template.vertices, template.vertices.length);
 
-  const area = getPolygonArea(template.vertices);
-  const density = TARGET_SHAPE_MASS / Math.max(area, 0.01);
+  const polygonArea = getPolygonArea(template.vertices);
+  const density = TARGET_SHAPE_MASS / Math.max(polygonArea, 0.01);
 
   body.CreateFixture({
-    shape: polygon,
+    shape,
     density,
     friction: 0.55,
     restitution: 0.15,
   });
 
-  shapes.push({
-    body,
-    color: template.color,
-    vertices: template.vertices,
+  shapes.push({ body, vertices: template.vertices, color: template.color });
+};
+
+const resetGestureReference = () => {
+  if (!placementState) {
+    return;
+  }
+
+  placementState.gestureBasePosition = cloneVec2(placementState.position);
+  placementState.gestureBaseAngle = placementState.angle;
+
+  for (const sample of placementState.pointers.values()) {
+    sample.start = cloneVec2(sample.current);
+  }
+};
+
+const updatePlacementTransform = () => {
+  if (!placementState || placementState.pointers.size === 0) {
+    return;
+  }
+
+  const entries = [...placementState.pointers.entries()].sort((a, b) => a[0] - b[0]);
+
+  if (entries.length === 1) {
+    const [, sample] = entries[0];
+    const deltaX = sample.current.x - sample.start.x;
+    const deltaY = sample.current.y - sample.start.y;
+
+    placementState.position = new b2Vec2(
+      placementState.gestureBasePosition.x + deltaX,
+      placementState.gestureBasePosition.y + deltaY,
+    );
+    placementState.angle = placementState.gestureBaseAngle;
+    return;
+  }
+
+  const [, first] = entries[0];
+  const [, second] = entries[1];
+
+  const startCentroid = new b2Vec2(
+    (first.start.x + second.start.x) * 0.5,
+    (first.start.y + second.start.y) * 0.5,
+  );
+  const currentCentroid = new b2Vec2(
+    (first.current.x + second.current.x) * 0.5,
+    (first.current.y + second.current.y) * 0.5,
+  );
+
+  const startVector = new b2Vec2(second.start.x - first.start.x, second.start.y - first.start.y);
+  const currentVector = new b2Vec2(second.current.x - first.current.x, second.current.y - first.current.y);
+
+  const startAngle = Math.atan2(startVector.y, startVector.x);
+  const currentAngle = Math.atan2(currentVector.y, currentVector.x);
+
+  placementState.position = new b2Vec2(
+    placementState.gestureBasePosition.x + (currentCentroid.x - startCentroid.x),
+    placementState.gestureBasePosition.y + (currentCentroid.y - startCentroid.y),
+  );
+  placementState.angle = placementState.gestureBaseAngle + (currentAngle - startAngle);
+};
+
+const beginPlacementFromTemplate = (template: PieceTemplate, worldPoint: b2Vec2) => {
+  placementState = {
+    template,
+    position: cloneVec2(worldPoint),
+    angle: 0,
+    pointers: new Map(),
+    gestureBasePosition: cloneVec2(worldPoint),
+    gestureBaseAngle: 0,
+  };
+
+  setApplyButtonEnabled(true);
+};
+
+const addPlacementPointer = (pointerId: number, worldPoint: b2Vec2) => {
+  if (!placementState) {
+    return;
+  }
+
+  placementState.pointers.set(pointerId, {
+    start: cloneVec2(worldPoint),
+    current: cloneVec2(worldPoint),
   });
+  resetGestureReference();
 };
 
-const transformedVertices = (vertices: b2Vec2[], position: b2Vec2, angle: number) => {
-  const cos = Math.cos(angle);
-  const sin = Math.sin(angle);
-  return vertices.map((vertex) => new b2Vec2(
-    position.x + cos * vertex.x - sin * vertex.y,
-    position.y + sin * vertex.x + cos * vertex.y,
-  ));
+const removePlacementPointer = (pointerId: number) => {
+  if (!placementState) {
+    return;
+  }
+
+  placementState.pointers.delete(pointerId);
+  if (placementState.pointers.size > 0) {
+    resetGestureReference();
+  }
 };
 
-const drawPolygon = (vertices: b2Vec2[]) => {
+const commitPlacement = () => {
+  if (!placementState) {
+    return;
+  }
+
+  createDynamicBodyFromTemplate(
+    placementState.template,
+    cloneVec2(placementState.position),
+    placementState.angle,
+  );
+
+  placementState = undefined;
+  menuTemplates = createPieceTemplates(3);
+  setApplyButtonEnabled(false);
+};
+
+applyButton.addEventListener('click', commitPlacement);
+
+const onPointerDown = (event: PointerEvent) => {
+  const canvasPoint = getCanvasPoint(event);
+  const worldPoint = toWorldFromCanvas(canvasPoint.x, canvasPoint.y);
+
+  if (!placementState) {
+    if (canvasPoint.y < worldCanvasHeight) {
+      return;
+    }
+
+    const cards = getMenuCards();
+    const cardIndex = cards.findIndex((card) => isPointInRect(canvasPoint.x, canvasPoint.y, card));
+    if (cardIndex === -1) {
+      return;
+    }
+
+    beginPlacementFromTemplate(menuTemplates[cardIndex], worldPoint);
+  }
+
+  addPlacementPointer(event.pointerId, worldPoint);
+  canvas.setPointerCapture(event.pointerId);
+};
+
+const onPointerMove = (event: PointerEvent) => {
+  if (!placementState) {
+    return;
+  }
+
+  const sample = placementState.pointers.get(event.pointerId);
+  if (!sample) {
+    return;
+  }
+
+  const canvasPoint = getCanvasPoint(event);
+  sample.current = toWorldFromCanvas(canvasPoint.x, canvasPoint.y);
+  updatePlacementTransform();
+};
+
+const onPointerEnd = (event: PointerEvent) => {
+  if (!placementState) {
+    return;
+  }
+
+  removePlacementPointer(event.pointerId);
+};
+
+canvas.addEventListener('pointerdown', onPointerDown);
+canvas.addEventListener('pointermove', onPointerMove);
+canvas.addEventListener('pointerup', onPointerEnd);
+canvas.addEventListener('pointercancel', onPointerEnd);
+
+const drawRoundedRect = (rect: Rect, radius: number) => {
   context.beginPath();
-  vertices.forEach((v, i) => {
-    const x = v.x * PHYSICS_SCALE;
-    const y = v.y * PHYSICS_SCALE;
-    if (i === 0) {
-      context.moveTo(x, y);
+  context.moveTo(rect.x + radius, rect.y);
+  context.lineTo(rect.x + rect.width - radius, rect.y);
+  context.quadraticCurveTo(rect.x + rect.width, rect.y, rect.x + rect.width, rect.y + radius);
+  context.lineTo(rect.x + rect.width, rect.y + rect.height - radius);
+  context.quadraticCurveTo(rect.x + rect.width, rect.y + rect.height, rect.x + rect.width - radius, rect.y + rect.height);
+  context.lineTo(rect.x + radius, rect.y + rect.height);
+  context.quadraticCurveTo(rect.x, rect.y + rect.height, rect.x, rect.y + rect.height - radius);
+  context.lineTo(rect.x, rect.y + radius);
+  context.quadraticCurveTo(rect.x, rect.y, rect.x + radius, rect.y);
+  context.closePath();
+};
+
+const drawTemplate = (template: PieceTemplate, centerX: number, centerY: number, scale: number, angle = 0, alpha = 1) => {
+  context.save();
+  context.translate(centerX, centerY);
+  context.rotate(angle);
+  context.scale(scale, scale);
+  context.globalAlpha = alpha;
+  context.fillStyle = template.color;
+  context.beginPath();
+  template.vertices.forEach((vertex, index) => {
+    if (index === 0) {
+      context.moveTo(vertex.x * PHYSICS_SCALE, vertex.y * PHYSICS_SCALE);
     } else {
-      context.lineTo(x, y);
+      context.lineTo(vertex.x * PHYSICS_SCALE, vertex.y * PHYSICS_SCALE);
     }
   });
   context.closePath();
+  context.fill();
+  context.restore();
 };
 
 const renderWorld = () => {
   context.save();
   context.beginPath();
-  context.rect(0, 0, canvasWidth, worldPixelHeight);
+  context.rect(0, 0, canvasWidth, worldCanvasHeight);
   context.clip();
 
   context.fillStyle = '#0b1020';
-  context.fillRect(0, 0, canvasWidth, worldPixelHeight);
+  context.fillRect(0, 0, canvasWidth, worldCanvasHeight);
 
   context.save();
   context.translate(canvasWidth / 2, 0);
@@ -287,78 +497,13 @@ const renderWorld = () => {
   for (const shape of shapes) {
     const position = shape.body.GetPosition();
     const angle = shape.body.GetAngle();
-    const worldVertices = transformedVertices(shape.vertices, position, angle);
-    context.fillStyle = shape.color;
-    drawPolygon(worldVertices);
-    context.fill();
-  }
-
-  if (placement) {
-    const previewVertices = transformedVertices(placement.template.vertices, placement.position, placement.angle);
-    context.fillStyle = `${placement.template.color}cc`;
-    drawPolygon(previewVertices);
-    context.fill();
-
-    context.strokeStyle = '#ffffffaa';
-    context.lineWidth = 2;
-    drawPolygon(previewVertices);
-    context.stroke();
-  }
-
-  context.restore();
-  context.restore();
-};
-
-const fitTemplateToCardScale = (template: PieceTemplate, maxWidth: number, maxHeight: number) => {
-  let minX = Number.POSITIVE_INFINITY;
-  let maxX = Number.NEGATIVE_INFINITY;
-  let minY = Number.POSITIVE_INFINITY;
-  let maxY = Number.NEGATIVE_INFINITY;
-
-  for (const v of template.vertices) {
-    minX = Math.min(minX, v.x);
-    maxX = Math.max(maxX, v.x);
-    minY = Math.min(minY, v.y);
-    maxY = Math.max(maxY, v.y);
-  }
-
-  const width = Math.max(0.1, maxX - minX);
-  const height = Math.max(0.1, maxY - minY);
-
-  return Math.min(maxWidth / (width * PHYSICS_SCALE), maxHeight / (height * PHYSICS_SCALE));
-};
-
-const renderMenu = () => {
-  const menuTop = worldPixelHeight;
-  context.fillStyle = '#141b2e';
-  context.fillRect(0, menuTop, canvasWidth, MENU_HEIGHT_PX);
-
-  context.strokeStyle = '#25304f';
-  context.lineWidth = 2;
-  context.beginPath();
-  context.moveTo(0, menuTop + 1);
-  context.lineTo(canvasWidth, menuTop + 1);
-  context.stroke();
-
-  for (const card of paletteCards) {
-    context.fillStyle = '#1b2540';
-    context.fillRect(card.x, card.y, card.width, card.height);
-
-    context.strokeStyle = '#334470';
-    context.lineWidth = 2;
-    context.strokeRect(card.x, card.y, card.width, card.height);
-
-    const centerX = card.x + card.width / 2;
-    const centerY = card.y + card.height / 2;
-    const scale = fitTemplateToCardScale(card.template, card.width * 0.7, card.height * 0.7);
 
     context.save();
-    context.translate(centerX, centerY);
-    context.scale(scale, scale);
-    context.fillStyle = card.template.color;
-
+    context.translate(position.x * PHYSICS_SCALE, position.y * PHYSICS_SCALE);
+    context.rotate(angle);
+    context.fillStyle = shape.color;
     context.beginPath();
-    card.template.vertices.forEach((vertex, index) => {
+    shape.vertices.forEach((vertex, index) => {
       const x = vertex.x * PHYSICS_SCALE;
       const y = vertex.y * PHYSICS_SCALE;
       if (index === 0) {
@@ -372,15 +517,53 @@ const renderMenu = () => {
     context.restore();
   }
 
-  const isApplyEnabled = Boolean(placement);
-  context.fillStyle = isApplyEnabled ? '#2dbf6e' : '#4c5a76';
-  context.fillRect(applyButtonRect.x, applyButtonRect.y, applyButtonRect.width, applyButtonRect.height);
+  context.restore();
 
-  context.fillStyle = 'white';
-  context.font = '600 20px system-ui';
-  context.textAlign = 'center';
-  context.textBaseline = 'middle';
-  context.fillText('Apply', applyButtonRect.x + applyButtonRect.width / 2, applyButtonRect.y + applyButtonRect.height / 2);
+  if (placementState) {
+    const preview = toCanvasFromWorld(placementState.position.x, placementState.position.y);
+    drawTemplate(placementState.template, preview.x, preview.y, 1, placementState.angle, 0.85);
+  }
+
+  context.restore();
+};
+
+const renderMenu = () => {
+  context.fillStyle = '#101827';
+  context.fillRect(0, worldCanvasHeight, canvasWidth, MENU_HEIGHT_PX);
+
+  context.strokeStyle = '#2a364b';
+  context.lineWidth = 1;
+  context.beginPath();
+  context.moveTo(0, worldCanvasHeight + 0.5);
+  context.lineTo(canvasWidth, worldCanvasHeight + 0.5);
+  context.stroke();
+
+  const cards = getMenuCards();
+  cards.forEach((card, index) => {
+    const template = menuTemplates[index];
+    drawRoundedRect(card, MENU_CARD_CORNER_RADIUS);
+    context.fillStyle = '#1a2436';
+    context.fill();
+
+    context.lineWidth = 1;
+    context.strokeStyle = '#334155';
+    context.stroke();
+
+    const xs = template.vertices.map((vertex) => vertex.x * PHYSICS_SCALE);
+    const ys = template.vertices.map((vertex) => vertex.y * PHYSICS_SCALE);
+    const width = Math.max(...xs) - Math.min(...xs);
+    const height = Math.max(...ys) - Math.min(...ys);
+    const scale = Math.min((card.width - 20) / Math.max(width, 1), (card.height - 20) / Math.max(height, 1));
+
+    drawTemplate(
+      template,
+      card.x + card.width / 2,
+      card.y + card.height / 2,
+      scale,
+      0,
+      0.95,
+    );
+  });
 };
 
 const render = () => {
@@ -389,170 +572,8 @@ const render = () => {
   renderMenu();
 };
 
-const cardAtPoint = (x: number, y: number) => paletteCards.find((card) => x >= card.x && x <= card.x + card.width && y >= card.y && y <= card.y + card.height);
-
-const inRect = (x: number, y: number, rect: { x: number; y: number; width: number; height: number }) => x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height;
-
-const beginPlacementFromCard = (card: PieceCardLayout, pointerId: number, pointerWorld: b2Vec2) => {
-  placement = {
-    template: card.template,
-    position: pointerWorld,
-    angle: 0,
-    activePointerId: pointerId,
-    pointerOffset: new b2Vec2(0, 0),
-  };
-};
-
-const tryStartGesture = () => {
-  if (!placement || activePointers.size < 2) {
-    return;
-  }
-
-  const entries = [...activePointers.entries()];
-  const [pointerA, pointA] = entries[0];
-  const [pointerB, pointB] = entries[1];
-
-  const mid = new b2Vec2((pointA.x + pointB.x) / 2, (pointA.y + pointB.y) / 2);
-  const angle = Math.atan2(pointB.y - pointA.y, pointB.x - pointA.x);
-  const distance = Math.hypot(pointB.x - pointA.x, pointB.y - pointA.y);
-
-  gesture = {
-    pointerA,
-    pointerB,
-    initialMid: mid,
-    initialAngle: angle,
-    initialDistance: Math.max(distance, 0.001),
-    pieceInitialPosition: new b2Vec2(placement.position.x, placement.position.y),
-    pieceInitialAngle: placement.angle,
-  };
-};
-
-const updatePlacementFromPointers = () => {
-  if (!placement) {
-    return;
-  }
-
-  if (gesture) {
-    const pointA = activePointers.get(gesture.pointerA);
-    const pointB = activePointers.get(gesture.pointerB);
-    if (!pointA || !pointB) {
-      gesture = undefined;
-      return;
-    }
-
-    const currentMid = new b2Vec2((pointA.x + pointB.x) / 2, (pointA.y + pointB.y) / 2);
-    const currentAngle = Math.atan2(pointB.y - pointA.y, pointB.x - pointA.x);
-    const angleDelta = currentAngle - gesture.initialAngle;
-
-    placement.position = new b2Vec2(
-      gesture.pieceInitialPosition.x + (currentMid.x - gesture.initialMid.x),
-      gesture.pieceInitialPosition.y + (currentMid.y - gesture.initialMid.y),
-    );
-    placement.angle = gesture.pieceInitialAngle + angleDelta;
-    return;
-  }
-
-  if (placement.activePointerId !== null) {
-    const pointerPoint = activePointers.get(placement.activePointerId);
-    if (!pointerPoint) {
-      return;
-    }
-    placement.position = new b2Vec2(pointerPoint.x - placement.pointerOffset.x, pointerPoint.y - placement.pointerOffset.y);
-  }
-};
-
-canvas.addEventListener('pointerdown', (event) => {
-  const x = event.clientX;
-  const y = event.clientY;
-  const worldPoint = toWorldFromCanvas(x, y);
-
-  activePointers.set(event.pointerId, worldPoint);
-
-  if (inRect(x, y, applyButtonRect) && placement) {
-    spawnPlacedShape(placement.template, placement.position, placement.angle);
-    placement = undefined;
-    gesture = undefined;
-    activePointers.clear();
-    refillPalette();
-    rebuildMenuLayout();
-    render();
-    return;
-  }
-
-  if (!placement) {
-    const card = cardAtPoint(x, y);
-    if (!card) {
-      return;
-    }
-
-    beginPlacementFromCard(card, event.pointerId, worldPoint);
-    canvas.setPointerCapture(event.pointerId);
-    return;
-  }
-
-  if (placement.activePointerId === null) {
-    placement.activePointerId = event.pointerId;
-    placement.pointerOffset = new b2Vec2(worldPoint.x - placement.position.x, worldPoint.y - placement.position.y);
-  }
-
-  if (activePointers.size >= 2) {
-    placement.activePointerId = null;
-    tryStartGesture();
-  }
-
-  canvas.setPointerCapture(event.pointerId);
-});
-
-canvas.addEventListener('pointermove', (event) => {
-  if (!activePointers.has(event.pointerId)) {
-    return;
-  }
-
-  activePointers.set(event.pointerId, toWorldFromCanvas(event.clientX, event.clientY));
-  updatePlacementFromPointers();
-});
-
-const releasePointer = (pointerId: number) => {
-  activePointers.delete(pointerId);
-
-  if (!placement) {
-    gesture = undefined;
-    return;
-  }
-
-  if (gesture && (gesture.pointerA === pointerId || gesture.pointerB === pointerId)) {
-    gesture = undefined;
-
-    const remaining = [...activePointers.keys()][0];
-    if (remaining !== undefined) {
-      placement.activePointerId = remaining;
-      const point = activePointers.get(remaining);
-      if (point) {
-        placement.pointerOffset = new b2Vec2(point.x - placement.position.x, point.y - placement.position.y);
-      }
-    } else {
-      placement.activePointerId = null;
-    }
-  } else if (placement.activePointerId === pointerId) {
-    placement.activePointerId = null;
-  }
-
-  if (!gesture && activePointers.size >= 2) {
-    placement.activePointerId = null;
-    tryStartGesture();
-  }
-};
-
-canvas.addEventListener('pointerup', (event) => {
-  releasePointer(event.pointerId);
-});
-
-canvas.addEventListener('pointercancel', (event) => {
-  releasePointer(event.pointerId);
-});
-
 const tick = () => {
-  if (!placement) {
+  if (!placementState) {
     world.Step(TIME_STEP, STEP_CONFIG);
   }
 
@@ -570,6 +591,7 @@ const tick = () => {
 window.addEventListener('resize', resize);
 window.visualViewport?.addEventListener('resize', resize);
 
-refillPalette();
+menuTemplates = createPieceTemplates(3);
+setApplyButtonEnabled(false);
 resize();
 requestAnimationFrame(tick);
