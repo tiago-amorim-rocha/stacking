@@ -10,13 +10,15 @@ import {
 const PHYSICS_SCALE = 30;
 const TIME_STEP = 1 / 60;
 const STEP_CONFIG = { velocityIterations: 8, positionIterations: 3 } as const;
-const SPAWN_INTERVAL_MS = 5_000;
 const MAX_DEVICE_PIXEL_RATIO = 2;
 const MIN_WORLD_WIDTH_METERS = 0;
 const SIDE_PADDING_PX = 0;
 const TARGET_SHAPE_MASS = 1;
-const DRAG_FORCE_PER_METER = 8;
-const MAX_DRAG_FORCE_GRAVITY_RATIO = 0.96;
+const MENU_HEIGHT_PX = 160;
+const MENU_PADDING_PX = 16;
+const MENU_GAP_PX = 12;
+const APPLY_BUTTON_WIDTH_PX = 120;
+const APPLY_BUTTON_HEIGHT_PX = 52;
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) {
@@ -36,7 +38,6 @@ canvas.style.touchAction = 'none';
 app.append(canvas);
 
 initDebugOverlay();
-console.log('Debug overlay initialized');
 
 const world = b2World.Create(new b2Vec2(0, 10));
 type FallingShape = {
@@ -45,79 +46,57 @@ type FallingShape = {
   vertices: b2Vec2[];
 };
 
-type DragState = {
-  pointerId: number;
-  shape: FallingShape;
-  localGrabPoint: b2Vec2;
-  pointerWorld: b2Vec2;
+type PieceTemplate = {
+  id: string;
+  vertices: b2Vec2[];
+  color: string;
+};
+
+type PlacementState = {
+  template: PieceTemplate;
+  position: b2Vec2;
+  angle: number;
+  activePointerId: number | null;
+  pointerOffset: b2Vec2;
+};
+
+type GestureState = {
+  pointerA: number;
+  pointerB: number;
+  initialMid: b2Vec2;
+  initialAngle: number;
+  initialDistance: number;
+  pieceInitialPosition: b2Vec2;
+  pieceInitialAngle: number;
+};
+
+type PieceCardLayout = {
+  template: PieceTemplate;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 };
 
 const shapes: FallingShape[] = [];
+const activePointers = new Map<number, b2Vec2>();
 
 let floorBody: ReturnType<typeof world.CreateBody> | undefined;
 let leftWallBody: ReturnType<typeof world.CreateBody> | undefined;
 let rightWallBody: ReturnType<typeof world.CreateBody> | undefined;
 let canvasWidth = 0;
 let canvasHeight = 0;
+let worldPixelHeight = 0;
 let worldHalfWidth = MIN_WORLD_WIDTH_METERS / 2;
 let worldFloorY = 22;
-let worldTopPadding = 2;
-let dragState: DragState | undefined;
+let palette: PieceTemplate[] = [];
+let paletteCards: PieceCardLayout[] = [];
+let applyButtonRect = { x: 0, y: 0, width: APPLY_BUTTON_WIDTH_PX, height: APPLY_BUTTON_HEIGHT_PX };
+let placement: PlacementState | undefined;
+let gesture: GestureState | undefined;
+let pieceCounter = 0;
 
-const rebuildBounds = () => {
-  if (floorBody) {
-    world.DestroyBody(floorBody);
-  }
-  if (leftWallBody) {
-    world.DestroyBody(leftWallBody);
-  }
-  if (rightWallBody) {
-    world.DestroyBody(rightWallBody);
-  }
-
-  const wallThickness = 0.5;
-  const floorHalfHeight = 0.5;
-  const worldHeight = canvasHeight / PHYSICS_SCALE;
-  worldHalfWidth = Math.max(MIN_WORLD_WIDTH_METERS / 2, canvasWidth / (2 * PHYSICS_SCALE) - SIDE_PADDING_PX / PHYSICS_SCALE);
-  worldFloorY = worldHeight - 2;
-  worldTopPadding = 1.5;
-
-  floorBody = world.CreateBody({ type: b2BodyType.b2_staticBody });
-  floorBody.CreateFixture({
-    shape: new b2PolygonShape().SetAsBox(worldHalfWidth + 4, floorHalfHeight, { x: 0, y: worldFloorY }, 0),
-    friction: 0.7,
-  });
-
-  leftWallBody = world.CreateBody({ type: b2BodyType.b2_staticBody });
-  leftWallBody.CreateFixture({
-    shape: new b2PolygonShape().SetAsBox(wallThickness, worldHeight, { x: -worldHalfWidth, y: worldHeight / 2 }, 0),
-  });
-
-  rightWallBody = world.CreateBody({ type: b2BodyType.b2_staticBody });
-  rightWallBody.CreateFixture({
-    shape: new b2PolygonShape().SetAsBox(wallThickness, worldHeight, { x: worldHalfWidth, y: worldHeight / 2 }, 0),
-  });
-};
-
-const resize = () => {
-  const viewport = window.visualViewport;
-  const width = Math.max(1, Math.round(viewport?.width ?? window.innerWidth));
-  const height = Math.max(1, Math.round(viewport?.height ?? window.innerHeight));
-  const pixelRatio = Math.min(window.devicePixelRatio || 1, MAX_DEVICE_PIXEL_RATIO);
-
-  canvasWidth = width;
-  canvasHeight = height;
-  canvas.width = Math.round(width * pixelRatio);
-  canvas.height = Math.round(height * pixelRatio);
-  context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-  rebuildBounds();
-};
-
-window.addEventListener('resize', resize);
-window.visualViewport?.addEventListener('resize', resize);
-resize();
-
-const randomColor = () => `hsl(${Math.floor(Math.random() * 360)} 90% 65%)`;
+const randomColor = () => `hsl(${Math.floor(Math.random() * 360)} 85% 65%)`;
 
 const getPolygonArea = (vertices: b2Vec2[]) => {
   let signedArea = 0;
@@ -132,46 +111,10 @@ const getPolygonArea = (vertices: b2Vec2[]) => {
 
 const toWorldFromCanvas = (x: number, y: number) => new b2Vec2((x - canvasWidth / 2) / PHYSICS_SCALE, y / PHYSICS_SCALE);
 
-const toLocalFromBody = (bodyPosition: b2Vec2, bodyAngle: number, worldPoint: b2Vec2) => {
-  const dx = worldPoint.x - bodyPosition.x;
-  const dy = worldPoint.y - bodyPosition.y;
-  const cos = Math.cos(bodyAngle);
-  const sin = Math.sin(bodyAngle);
-  return new b2Vec2(cos * dx + sin * dy, -sin * dx + cos * dy);
-};
-
-const toWorldFromBody = (bodyPosition: b2Vec2, bodyAngle: number, localPoint: b2Vec2) => {
-  const cos = Math.cos(bodyAngle);
-  const sin = Math.sin(bodyAngle);
-  return new b2Vec2(
-    bodyPosition.x + cos * localPoint.x - sin * localPoint.y,
-    bodyPosition.y + sin * localPoint.x + cos * localPoint.y,
-  );
-};
-
-const isPointInPolygon = (point: b2Vec2, vertices: b2Vec2[]) => {
-  let inside = false;
-  for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i, i += 1) {
-    const xi = vertices[i].x;
-    const yi = vertices[i].y;
-    const xj = vertices[j].x;
-    const yj = vertices[j].y;
-
-    const intersects = (yi > point.y) !== (yj > point.y)
-      && point.x < ((xj - xi) * (point.y - yi)) / (yj - yi) + xi;
-    if (intersects) {
-      inside = !inside;
-    }
-  }
-
-  return inside;
-};
-
 const createOrganicLongShape = () => {
   const length = 1.8 + Math.random() * 1.8;
   const halfLength = length / 2;
 
-  // Independent top/bottom offsets avoid parallel edges and keep a hand-drawn look.
   const topLeft = 0.16 + Math.random() * 0.2;
   const topMiddle = 0.2 + Math.random() * 0.22;
   const topRight = 0.15 + Math.random() * 0.22;
@@ -190,124 +133,153 @@ const createOrganicLongShape = () => {
   ];
 };
 
-const spawnShape = () => {
-  const vertices = createOrganicLongShape();
-  const body = world.CreateBody({
-    type: b2BodyType.b2_dynamicBody,
-    position: { x: -worldHalfWidth * 0.7 + Math.random() * worldHalfWidth * 1.4, y: worldTopPadding },
-    angularVelocity: Math.random() * 2 - 1,
+const createTemplate = (): PieceTemplate => {
+  pieceCounter += 1;
+  return {
+    id: `piece-${pieceCounter}`,
+    vertices: createOrganicLongShape(),
+    color: randomColor(),
+  };
+};
+
+const refillPalette = () => {
+  palette = [createTemplate(), createTemplate(), createTemplate()];
+};
+
+const rebuildBounds = () => {
+  if (floorBody) {
+    world.DestroyBody(floorBody);
+  }
+  if (leftWallBody) {
+    world.DestroyBody(leftWallBody);
+  }
+  if (rightWallBody) {
+    world.DestroyBody(rightWallBody);
+  }
+
+  const wallThickness = 0.5;
+  const floorHalfHeight = 0.5;
+  const worldHeight = worldPixelHeight / PHYSICS_SCALE;
+  worldHalfWidth = Math.max(MIN_WORLD_WIDTH_METERS / 2, canvasWidth / (2 * PHYSICS_SCALE) - SIDE_PADDING_PX / PHYSICS_SCALE);
+  worldFloorY = worldHeight - 1;
+
+  floorBody = world.CreateBody({ type: b2BodyType.b2_staticBody });
+  floorBody.CreateFixture({
+    shape: new b2PolygonShape().SetAsBox(worldHalfWidth + 4, floorHalfHeight, { x: 0, y: worldFloorY }, 0),
+    friction: 0.7,
   });
 
-  const shape = new b2PolygonShape();
-  shape.Set(vertices, vertices.length);
+  leftWallBody = world.CreateBody({ type: b2BodyType.b2_staticBody });
+  leftWallBody.CreateFixture({
+    shape: new b2PolygonShape().SetAsBox(wallThickness, worldHeight, { x: -worldHalfWidth, y: worldHeight / 2 }, 0),
+  });
 
-  const polygonArea = getPolygonArea(vertices);
-  const density = TARGET_SHAPE_MASS / Math.max(polygonArea, 0.01);
+  rightWallBody = world.CreateBody({ type: b2BodyType.b2_staticBody });
+  rightWallBody.CreateFixture({
+    shape: new b2PolygonShape().SetAsBox(wallThickness, worldHeight, { x: worldHalfWidth, y: worldHeight / 2 }, 0),
+  });
+};
+
+const rebuildMenuLayout = () => {
+  const menuTop = worldPixelHeight;
+  const contentY = menuTop + MENU_PADDING_PX;
+
+  applyButtonRect = {
+    x: canvasWidth - MENU_PADDING_PX - APPLY_BUTTON_WIDTH_PX,
+    y: contentY + 40,
+    width: APPLY_BUTTON_WIDTH_PX,
+    height: APPLY_BUTTON_HEIGHT_PX,
+  };
+
+  const cardsAvailableWidth = Math.max(120, applyButtonRect.x - MENU_PADDING_PX * 2 - MENU_GAP_PX * 2);
+  const cardWidth = cardsAvailableWidth / 3;
+  const cardHeight = MENU_HEIGHT_PX - MENU_PADDING_PX * 2;
+
+  paletteCards = palette.map((template, index) => ({
+    template,
+    x: MENU_PADDING_PX + index * (cardWidth + MENU_GAP_PX),
+    y: contentY,
+    width: cardWidth,
+    height: cardHeight,
+  }));
+};
+
+const resize = () => {
+  const viewport = window.visualViewport;
+  const width = Math.max(1, Math.round(viewport?.width ?? window.innerWidth));
+  const height = Math.max(1, Math.round(viewport?.height ?? window.innerHeight));
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, MAX_DEVICE_PIXEL_RATIO);
+
+  canvasWidth = width;
+  canvasHeight = height;
+  worldPixelHeight = Math.max(120, canvasHeight - MENU_HEIGHT_PX);
+
+  canvas.width = Math.round(width * pixelRatio);
+  canvas.height = Math.round(height * pixelRatio);
+  context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+
+  rebuildBounds();
+  rebuildMenuLayout();
+};
+
+const spawnPlacedShape = (template: PieceTemplate, position: b2Vec2, angle: number) => {
+  const body = world.CreateBody({
+    type: b2BodyType.b2_dynamicBody,
+    position,
+    angle,
+  });
+
+  const polygon = new b2PolygonShape();
+  polygon.Set(template.vertices, template.vertices.length);
+
+  const area = getPolygonArea(template.vertices);
+  const density = TARGET_SHAPE_MASS / Math.max(area, 0.01);
 
   body.CreateFixture({
-    shape,
+    shape: polygon,
     density,
     friction: 0.55,
     restitution: 0.15,
   });
 
-  shapes.push({ body, vertices, color: randomColor() });
+  shapes.push({
+    body,
+    color: template.color,
+    vertices: template.vertices,
+  });
 };
 
-const getTopmostShapeAtPoint = (worldPoint: b2Vec2) => {
-  for (let i = shapes.length - 1; i >= 0; i -= 1) {
-    const shape = shapes[i];
-    const body = shape.body;
-    const localPoint = toLocalFromBody(body.GetPosition(), body.GetAngle(), worldPoint);
-    if (isPointInPolygon(localPoint, shape.vertices)) {
-      return { shape, localPoint };
+const transformedVertices = (vertices: b2Vec2[], position: b2Vec2, angle: number) => {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  return vertices.map((vertex) => new b2Vec2(
+    position.x + cos * vertex.x - sin * vertex.y,
+    position.y + sin * vertex.x + cos * vertex.y,
+  ));
+};
+
+const drawPolygon = (vertices: b2Vec2[]) => {
+  context.beginPath();
+  vertices.forEach((v, i) => {
+    const x = v.x * PHYSICS_SCALE;
+    const y = v.y * PHYSICS_SCALE;
+    if (i === 0) {
+      context.moveTo(x, y);
+    } else {
+      context.lineTo(x, y);
     }
-  }
-
-  return undefined;
+  });
+  context.closePath();
 };
 
-const updateDragForce = () => {
-  if (!dragState) {
-    return;
-  }
+const renderWorld = () => {
+  context.save();
+  context.beginPath();
+  context.rect(0, 0, canvasWidth, worldPixelHeight);
+  context.clip();
 
-  const body = dragState.shape.body;
-  const bodyPosition = body.GetPosition();
-  const bodyAngle = body.GetAngle();
-  const grabPointWorld = toWorldFromBody(bodyPosition, bodyAngle, dragState.localGrabPoint);
-
-  const pullVector = new b2Vec2(
-    dragState.pointerWorld.x - grabPointWorld.x,
-    dragState.pointerWorld.y - grabPointWorld.y,
-  );
-  const pullDistance = Math.hypot(pullVector.x, pullVector.y);
-
-  if (pullDistance <= 0.0001) {
-    return;
-  }
-
-  const bodyMass = body.GetMass();
-  const gravityMagnitude = Math.abs(world.GetGravity().y);
-  const maxForce = bodyMass * gravityMagnitude * MAX_DRAG_FORCE_GRAVITY_RATIO;
-  const requestedForce = pullDistance * DRAG_FORCE_PER_METER;
-  const forceMagnitude = Math.min(requestedForce, maxForce);
-
-  const normalizedX = pullVector.x / pullDistance;
-  const normalizedY = pullVector.y / pullDistance;
-  const force = new b2Vec2(normalizedX * forceMagnitude, normalizedY * forceMagnitude);
-
-  body.ApplyForce(force, grabPointWorld, true);
-};
-
-canvas.addEventListener('pointerdown', (event) => {
-  const worldPoint = toWorldFromCanvas(event.clientX, event.clientY);
-  const hit = getTopmostShapeAtPoint(worldPoint);
-  if (!hit) {
-    return;
-  }
-
-  dragState = {
-    pointerId: event.pointerId,
-    shape: hit.shape,
-    localGrabPoint: hit.localPoint,
-    pointerWorld: worldPoint,
-  };
-
-  canvas.setPointerCapture(event.pointerId);
-  hit.shape.body.SetAwake(true);
-});
-
-canvas.addEventListener('pointermove', (event) => {
-  if (!dragState || dragState.pointerId !== event.pointerId) {
-    return;
-  }
-
-  dragState.pointerWorld = toWorldFromCanvas(event.clientX, event.clientY);
-});
-
-const endDrag = (pointerId: number) => {
-  if (!dragState || dragState.pointerId !== pointerId) {
-    return;
-  }
-
-  dragState = undefined;
-};
-
-canvas.addEventListener('pointerup', (event) => {
-  endDrag(event.pointerId);
-});
-
-canvas.addEventListener('pointercancel', (event) => {
-  endDrag(event.pointerId);
-});
-
-let previousSpawn = 0;
-
-const render = () => {
-  context.clearRect(0, 0, canvasWidth, canvasHeight);
   context.fillStyle = '#0b1020';
-  context.fillRect(0, 0, canvasWidth, canvasHeight);
+  context.fillRect(0, 0, canvasWidth, worldPixelHeight);
 
   context.save();
   context.translate(canvasWidth / 2, 0);
@@ -315,13 +287,78 @@ const render = () => {
   for (const shape of shapes) {
     const position = shape.body.GetPosition();
     const angle = shape.body.GetAngle();
+    const worldVertices = transformedVertices(shape.vertices, position, angle);
+    context.fillStyle = shape.color;
+    drawPolygon(worldVertices);
+    context.fill();
+  }
+
+  if (placement) {
+    const previewVertices = transformedVertices(placement.template.vertices, placement.position, placement.angle);
+    context.fillStyle = `${placement.template.color}cc`;
+    drawPolygon(previewVertices);
+    context.fill();
+
+    context.strokeStyle = '#ffffffaa';
+    context.lineWidth = 2;
+    drawPolygon(previewVertices);
+    context.stroke();
+  }
+
+  context.restore();
+  context.restore();
+};
+
+const fitTemplateToCardScale = (template: PieceTemplate, maxWidth: number, maxHeight: number) => {
+  let minX = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+
+  for (const v of template.vertices) {
+    minX = Math.min(minX, v.x);
+    maxX = Math.max(maxX, v.x);
+    minY = Math.min(minY, v.y);
+    maxY = Math.max(maxY, v.y);
+  }
+
+  const width = Math.max(0.1, maxX - minX);
+  const height = Math.max(0.1, maxY - minY);
+
+  return Math.min(maxWidth / (width * PHYSICS_SCALE), maxHeight / (height * PHYSICS_SCALE));
+};
+
+const renderMenu = () => {
+  const menuTop = worldPixelHeight;
+  context.fillStyle = '#141b2e';
+  context.fillRect(0, menuTop, canvasWidth, MENU_HEIGHT_PX);
+
+  context.strokeStyle = '#25304f';
+  context.lineWidth = 2;
+  context.beginPath();
+  context.moveTo(0, menuTop + 1);
+  context.lineTo(canvasWidth, menuTop + 1);
+  context.stroke();
+
+  for (const card of paletteCards) {
+    context.fillStyle = '#1b2540';
+    context.fillRect(card.x, card.y, card.width, card.height);
+
+    context.strokeStyle = '#334470';
+    context.lineWidth = 2;
+    context.strokeRect(card.x, card.y, card.width, card.height);
+
+    const centerX = card.x + card.width / 2;
+    const centerY = card.y + card.height / 2;
+    const scale = fitTemplateToCardScale(card.template, card.width * 0.7, card.height * 0.7);
 
     context.save();
-    context.translate(position.x * PHYSICS_SCALE, position.y * PHYSICS_SCALE);
-    context.rotate(angle);
-    context.fillStyle = shape.color;
+    context.translate(centerX, centerY);
+    context.scale(scale, scale);
+    context.fillStyle = card.template.color;
+
     context.beginPath();
-    shape.vertices.forEach((vertex, index) => {
+    card.template.vertices.forEach((vertex, index) => {
       const x = vertex.x * PHYSICS_SCALE;
       const y = vertex.y * PHYSICS_SCALE;
       if (index === 0) {
@@ -335,36 +372,193 @@ const render = () => {
     context.restore();
   }
 
-  if (dragState) {
-    const body = dragState.shape.body;
-    const grabPointWorld = toWorldFromBody(body.GetPosition(), body.GetAngle(), dragState.localGrabPoint);
+  const isApplyEnabled = Boolean(placement);
+  context.fillStyle = isApplyEnabled ? '#2dbf6e' : '#4c5a76';
+  context.fillRect(applyButtonRect.x, applyButtonRect.y, applyButtonRect.width, applyButtonRect.height);
 
-    context.strokeStyle = '#ffffffcc';
-    context.lineWidth = 2;
-    context.beginPath();
-    context.moveTo(grabPointWorld.x * PHYSICS_SCALE, grabPointWorld.y * PHYSICS_SCALE);
-    context.lineTo(dragState.pointerWorld.x * PHYSICS_SCALE, dragState.pointerWorld.y * PHYSICS_SCALE);
-    context.stroke();
-  }
-
-  context.restore();
+  context.fillStyle = 'white';
+  context.font = '600 20px system-ui';
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillText('Apply', applyButtonRect.x + applyButtonRect.width / 2, applyButtonRect.y + applyButtonRect.height / 2);
 };
 
-const tick = (timestamp: number) => {
-  if (!previousSpawn || timestamp - previousSpawn >= SPAWN_INTERVAL_MS) {
-    previousSpawn = timestamp;
-    spawnShape();
+const render = () => {
+  context.clearRect(0, 0, canvasWidth, canvasHeight);
+  renderWorld();
+  renderMenu();
+};
+
+const cardAtPoint = (x: number, y: number) => paletteCards.find((card) => x >= card.x && x <= card.x + card.width && y >= card.y && y <= card.y + card.height);
+
+const inRect = (x: number, y: number, rect: { x: number; y: number; width: number; height: number }) => x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height;
+
+const beginPlacementFromCard = (card: PieceCardLayout, pointerId: number, pointerWorld: b2Vec2) => {
+  placement = {
+    template: card.template,
+    position: pointerWorld,
+    angle: 0,
+    activePointerId: pointerId,
+    pointerOffset: new b2Vec2(0, 0),
+  };
+};
+
+const tryStartGesture = () => {
+  if (!placement || activePointers.size < 2) {
+    return;
   }
 
-  updateDragForce();
-  world.Step(TIME_STEP, STEP_CONFIG);
+  const entries = [...activePointers.entries()];
+  const [pointerA, pointA] = entries[0];
+  const [pointerB, pointB] = entries[1];
+
+  const mid = new b2Vec2((pointA.x + pointB.x) / 2, (pointA.y + pointB.y) / 2);
+  const angle = Math.atan2(pointB.y - pointA.y, pointB.x - pointA.x);
+  const distance = Math.hypot(pointB.x - pointA.x, pointB.y - pointA.y);
+
+  gesture = {
+    pointerA,
+    pointerB,
+    initialMid: mid,
+    initialAngle: angle,
+    initialDistance: Math.max(distance, 0.001),
+    pieceInitialPosition: new b2Vec2(placement.position.x, placement.position.y),
+    pieceInitialAngle: placement.angle,
+  };
+};
+
+const updatePlacementFromPointers = () => {
+  if (!placement) {
+    return;
+  }
+
+  if (gesture) {
+    const pointA = activePointers.get(gesture.pointerA);
+    const pointB = activePointers.get(gesture.pointerB);
+    if (!pointA || !pointB) {
+      gesture = undefined;
+      return;
+    }
+
+    const currentMid = new b2Vec2((pointA.x + pointB.x) / 2, (pointA.y + pointB.y) / 2);
+    const currentAngle = Math.atan2(pointB.y - pointA.y, pointB.x - pointA.x);
+    const angleDelta = currentAngle - gesture.initialAngle;
+
+    placement.position = new b2Vec2(
+      gesture.pieceInitialPosition.x + (currentMid.x - gesture.initialMid.x),
+      gesture.pieceInitialPosition.y + (currentMid.y - gesture.initialMid.y),
+    );
+    placement.angle = gesture.pieceInitialAngle + angleDelta;
+    return;
+  }
+
+  if (placement.activePointerId !== null) {
+    const pointerPoint = activePointers.get(placement.activePointerId);
+    if (!pointerPoint) {
+      return;
+    }
+    placement.position = new b2Vec2(pointerPoint.x - placement.pointerOffset.x, pointerPoint.y - placement.pointerOffset.y);
+  }
+};
+
+canvas.addEventListener('pointerdown', (event) => {
+  const x = event.clientX;
+  const y = event.clientY;
+  const worldPoint = toWorldFromCanvas(x, y);
+
+  activePointers.set(event.pointerId, worldPoint);
+
+  if (inRect(x, y, applyButtonRect) && placement) {
+    spawnPlacedShape(placement.template, placement.position, placement.angle);
+    placement = undefined;
+    gesture = undefined;
+    activePointers.clear();
+    refillPalette();
+    rebuildMenuLayout();
+    render();
+    return;
+  }
+
+  if (!placement) {
+    const card = cardAtPoint(x, y);
+    if (!card) {
+      return;
+    }
+
+    beginPlacementFromCard(card, event.pointerId, worldPoint);
+    canvas.setPointerCapture(event.pointerId);
+    return;
+  }
+
+  if (placement.activePointerId === null) {
+    placement.activePointerId = event.pointerId;
+    placement.pointerOffset = new b2Vec2(worldPoint.x - placement.position.x, worldPoint.y - placement.position.y);
+  }
+
+  if (activePointers.size >= 2) {
+    placement.activePointerId = null;
+    tryStartGesture();
+  }
+
+  canvas.setPointerCapture(event.pointerId);
+});
+
+canvas.addEventListener('pointermove', (event) => {
+  if (!activePointers.has(event.pointerId)) {
+    return;
+  }
+
+  activePointers.set(event.pointerId, toWorldFromCanvas(event.clientX, event.clientY));
+  updatePlacementFromPointers();
+});
+
+const releasePointer = (pointerId: number) => {
+  activePointers.delete(pointerId);
+
+  if (!placement) {
+    gesture = undefined;
+    return;
+  }
+
+  if (gesture && (gesture.pointerA === pointerId || gesture.pointerB === pointerId)) {
+    gesture = undefined;
+
+    const remaining = [...activePointers.keys()][0];
+    if (remaining !== undefined) {
+      placement.activePointerId = remaining;
+      const point = activePointers.get(remaining);
+      if (point) {
+        placement.pointerOffset = new b2Vec2(point.x - placement.position.x, point.y - placement.position.y);
+      }
+    } else {
+      placement.activePointerId = null;
+    }
+  } else if (placement.activePointerId === pointerId) {
+    placement.activePointerId = null;
+  }
+
+  if (!gesture && activePointers.size >= 2) {
+    placement.activePointerId = null;
+    tryStartGesture();
+  }
+};
+
+canvas.addEventListener('pointerup', (event) => {
+  releasePointer(event.pointerId);
+});
+
+canvas.addEventListener('pointercancel', (event) => {
+  releasePointer(event.pointerId);
+});
+
+const tick = () => {
+  if (!placement) {
+    world.Step(TIME_STEP, STEP_CONFIG);
+  }
 
   if (shapes.length > 100) {
     const removed = shapes.splice(0, shapes.length - 100);
     for (const shape of removed) {
-      if (dragState?.shape === shape) {
-        dragState = undefined;
-      }
       world.DestroyBody(shape.body);
     }
   }
@@ -373,4 +567,9 @@ const tick = (timestamp: number) => {
   requestAnimationFrame(tick);
 };
 
+window.addEventListener('resize', resize);
+window.visualViewport?.addEventListener('resize', resize);
+
+refillPalette();
+resize();
 requestAnimationFrame(tick);
