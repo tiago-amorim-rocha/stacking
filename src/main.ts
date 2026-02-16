@@ -19,7 +19,8 @@ const MENU_PADDING_PX = 16;
 const MENU_GAP_PX = 12;
 const APPLY_BUTTON_SIZE_PX = 64;
 const MENU_PREVIEW_WORLD_SCALE = 1;
-const WHEEL_ROTATION_STEP_RAD = Math.PI / 54;
+const WHEEL_ROTATION_RADIANS_PER_DELTA_Y = Math.PI / 5400;
+const MAX_WHEEL_ROTATION_STEP_RAD = Math.PI / 60;
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) {
@@ -1194,8 +1195,13 @@ canvas.addEventListener('pointermove', (event) => {
 });
 
 canvas.addEventListener('wheel', (event) => {
-  const direction = event.deltaY > 0 ? 1 : -1;
-  const rotationDelta = direction * WHEEL_ROTATION_STEP_RAD;
+  const wheelDelta = event.deltaY;
+  const rawRotationDelta = wheelDelta * WHEEL_ROTATION_RADIANS_PER_DELTA_Y;
+  const rotationDelta = Math.max(-MAX_WHEEL_ROTATION_STEP_RAD, Math.min(MAX_WHEEL_ROTATION_STEP_RAD, rawRotationDelta));
+
+  if (rotationDelta === 0) {
+    return;
+  }
 
   let target = currentManipulationTarget() ?? selectedTarget();
   if (!target) {
