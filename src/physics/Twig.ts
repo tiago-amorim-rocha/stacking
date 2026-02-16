@@ -1,10 +1,11 @@
 import {
   b2Body,
+  b2AngularStiffness,
   b2BodyType,
   b2PolygonShape,
-  b2RevoluteJoint,
-  b2RevoluteJointDef,
   b2Vec2,
+  b2WeldJoint,
+  b2WeldJointDef,
   b2World,
 } from '@box2d/core';
 
@@ -39,10 +40,11 @@ const MIN_FIXTURE_THICKNESS = 0.14;
 const MIN_SEGMENT_COUNT = 1;
 const DEFAULT_STEP_SECONDS = 1 / 60;
 const MAX_ABS_ANGLE_LIMIT_DEG = 170;
-const ANGLE_SETTLE_DEADBAND_RAD = 0.003;
-const SPEED_SETTLE_DEADBAND_RAD_PER_SEC = 0.04;
+const LIMIT_DEADBAND_RAD = 0.002;
+const LIMIT_SPEED_DEADBAND_RAD_PER_SEC = 0.03;
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
+const normalizeRadians = (angle: number) => Math.atan2(Math.sin(angle), Math.cos(angle));
 const rotateVector = (x: number, y: number, angle: number) => {
   const c = Math.cos(angle);
   const s = Math.sin(angle);
@@ -63,7 +65,7 @@ export class Twig {
   private readonly segmentLength: number;
   private readonly fixtureThickness: number;
   private readonly bodies: b2Body[] = [];
-  private readonly joints: b2RevoluteJoint[] = [];
+  private readonly joints: b2WeldJoint[] = [];
   private tuning: TwigTuning;
   private destroyed = false;
 
@@ -115,23 +117,17 @@ export class Twig {
       this.bodies.push(body);
     }
 
-    const angleLimit = this.getSafeAngleLimitRadians();
-    const initialTorque = this.computeController(DEFAULT_STEP_SECONDS).driveTorque;
+    const weldProfile = this.computeWeldProfile();
     for (let i = 0; i < this.bodies.length - 1; i += 1) {
       const bodyA = this.bodies[i];
       const bodyB = this.bodies[i + 1];
       const localAnchorX = -halfLength + this.segmentLength * (i + 1);
       const anchorOffset = rotateVector(localAnchorX, 0, initialAngle);
       const anchor = new b2Vec2(startPos.x + anchorOffset.x, startPos.y + anchorOffset.y);
-      const jointDef = new b2RevoluteJointDef();
+      const jointDef = new b2WeldJointDef();
       jointDef.Initialize(bodyA, bodyB, anchor);
-      jointDef.enableLimit = true;
-      jointDef.lowerAngle = -angleLimit;
-      jointDef.upperAngle = angleLimit;
-      jointDef.enableMotor = true;
-      jointDef.motorSpeed = 0;
-      jointDef.maxMotorTorque = initialTorque;
       jointDef.collideConnected = false;
+      b2AngularStiffness(jointDef, weldProfile.frequencyHz, weldProfile.dampingRatio, bodyA, bodyB);
 
       this.joints.push(this.world.CreateJoint(jointDef));
     }
@@ -147,22 +143,18 @@ export class Twig {
       : DEFAULT_TWIG_TUNING.angularDamping;
   }
 
-  private computeController(stepSeconds: number) {
+  private computeWeldProfile() {
     const userStiffness = Number.isFinite(this.tuning.jointStiffness) ? Math.max(0, this.tuning.jointStiffness) : 0;
     const userDamping = Number.isFinite(this.tuning.jointDamping) ? Math.max(0, this.tuning.jointDamping) : 0;
+    const angleLimitDeg = clamp(Math.abs(this.tuning.angleLimitDeg), 0.1, MAX_ABS_ANGLE_LIMIT_DEG);
 
-    // Compress extreme user values with log scaling so tuning stays responsive but stable.
-    const hertz = clamp(Math.log1p(userStiffness) * 1.1, 0, 8);
-    const dampingRatio = clamp(Math.log1p(userDamping) * 0.4, 0, 3);
-    const omega = 2 * Math.PI * hertz;
-
+    // Smaller angle limits imply a stiffer beam, larger limits imply more flexibility.
+    const flexibilityFactor = Math.pow(clamp(angleLimitDeg / 15, 0.2, 8), 0.65);
+    const frequencyHz = clamp(Math.log1p(userStiffness) * 2.2 / flexibilityFactor, 0, 10);
+    const dampingRatio = clamp(Math.log1p(userDamping) * 0.45 + 0.05, 0, 4);
     return {
-      proportional: omega * omega,
-      derivative: 2 * dampingRatio * omega,
-      driveTorque: clamp(0.06 + Math.log1p(userStiffness + 1) * 1.4 + Math.log1p(userDamping + 1) * 2.6, 0.06, 30),
-      settleTorque: clamp(0.02 + Math.log1p(userDamping + 1) * 0.4, 0.02, 3),
-      maxSpeed: clamp(2 + hertz * 0.8, 2, 8),
-      stepSeconds,
+      frequencyHz,
+      dampingRatio,
     };
   }
 
@@ -171,37 +163,49 @@ export class Twig {
       ...this.tuning,
       ...tuning,
     };
-    const angleLimit = this.getSafeAngleLimitRadians();
-    const { driveTorque } = this.computeController(DEFAULT_STEP_SECONDS);
+    const weldProfile = this.computeWeldProfile();
     for (const body of this.bodies) {
       body.SetAngularDamping(this.getSafeAngularDamping());
     }
-    for (const joint of this.joints) {
-      joint.SetLimits(-angleLimit, angleLimit);
-      joint.SetMaxMotorTorque(driveTorque);
-      joint.EnableMotor(true);
+    for (let i = 0; i < this.joints.length; i += 1) {
+      const bodyA = this.bodies[i];
+      const bodyB = this.bodies[i + 1];
+      const stiffnessDef = { stiffness: 0, damping: 0 };
+      b2AngularStiffness(stiffnessDef, weldProfile.frequencyHz, weldProfile.dampingRatio, bodyA, bodyB);
+      this.joints[i].SetStiffness(stiffnessDef.stiffness);
+      this.joints[i].SetDamping(stiffnessDef.damping);
     }
   }
 
   public updateSoftness(stepSeconds = DEFAULT_STEP_SECONDS) {
-    const controller = this.computeController(stepSeconds);
-    for (const joint of this.joints) {
-      const angle = joint.GetJointAngle();
-      const speed = joint.GetJointSpeed();
+    const angleLimit = this.getSafeAngleLimitRadians();
+    const userStiffness = Number.isFinite(this.tuning.jointStiffness) ? Math.max(0, this.tuning.jointStiffness) : 0;
+    const userDamping = Number.isFinite(this.tuning.jointDamping) ? Math.max(0, this.tuning.jointDamping) : 0;
+    const limitSpring = clamp((Math.log1p(userStiffness) + 0.2) * 18, 2, 120);
+    const limitDamping = clamp((Math.log1p(userDamping) + 0.1) * 3.2, 0.2, 25);
+    const maxLimitTorque = clamp(0.4 + Math.log1p(userStiffness + 1) * 4 + Math.log1p(userDamping + 1) * 4, 0.4, 80);
 
-      if (Math.abs(angle) < ANGLE_SETTLE_DEADBAND_RAD && Math.abs(speed) < SPEED_SETTLE_DEADBAND_RAD_PER_SEC) {
-        joint.SetMotorSpeed(0);
-        joint.SetMaxMotorTorque(controller.settleTorque);
+    for (let i = 0; i < this.bodies.length - 1; i += 1) {
+      const bodyA = this.bodies[i];
+      const bodyB = this.bodies[i + 1];
+      const relativeAngle = normalizeRadians(bodyB.GetAngle() - bodyA.GetAngle());
+      const relativeAngularVelocity = bodyB.GetAngularVelocity() - bodyA.GetAngularVelocity();
+      const overLimit = Math.abs(relativeAngle) - angleLimit;
+
+      if (overLimit <= LIMIT_DEADBAND_RAD && Math.abs(relativeAngularVelocity) < LIMIT_SPEED_DEADBAND_RAD_PER_SEC) {
+        continue;
+      }
+      if (overLimit <= 0) {
         continue;
       }
 
-      const targetSpeed = clamp(
-        -(angle * controller.proportional + speed * controller.derivative) * controller.stepSeconds,
-        -controller.maxSpeed,
-        controller.maxSpeed,
-      );
-      joint.SetMotorSpeed(targetSpeed);
-      joint.SetMaxMotorTorque(controller.driveTorque);
+      const direction = Math.sign(relativeAngle) || 1;
+      const correction = direction * overLimit;
+      const rawTorque = -(correction * limitSpring + relativeAngularVelocity * limitDamping) * stepSeconds;
+      const torque = clamp(rawTorque, -maxLimitTorque, maxLimitTorque);
+
+      bodyA.ApplyTorque(-torque, true);
+      bodyB.ApplyTorque(torque, true);
     }
   }
 

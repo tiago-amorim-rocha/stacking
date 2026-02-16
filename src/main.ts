@@ -11,8 +11,8 @@ import {
 
 const PHYSICS_SCALE = 30;
 const TIME_STEP = 1 / 60;
-const STEP_CONFIG = { velocityIterations: 10, positionIterations: 6 } as const;
-const TWIG_PHYSICS_SUBSTEPS = 2;
+const STEP_CONFIG = { velocityIterations: 12, positionIterations: 8 } as const;
+const TWIG_PHYSICS_SUBSTEPS = 3;
 const MAX_DEVICE_PIXEL_RATIO = 2;
 const MIN_WORLD_WIDTH_METERS = 0;
 const SIDE_PADDING_PX = 0;
