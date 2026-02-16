@@ -52,10 +52,7 @@ const rotateVector = (x: number, y: number, angle: number) => {
 };
 
 /**
- * Bendy twig made from rigid segments connected by revolute joints.
- *
- * NOTE (@box2d/core): revolute joints do not expose native spring/damping fields.
- * Softness is approximated with a motor PD controller in `updateSoftness()`.
+ * Bendy twig made from rigid segments connected by soft weld joints.
  */
 export class Twig {
   private readonly world: b2World;
@@ -150,8 +147,8 @@ export class Twig {
 
     // Smaller angle limits imply a stiffer beam, larger limits imply more flexibility.
     const flexibilityFactor = Math.pow(clamp(angleLimitDeg / 15, 0.2, 8), 0.65);
-    const frequencyHz = clamp(Math.log1p(userStiffness) * 2.2 / flexibilityFactor, 0, 10);
-    const dampingRatio = clamp(Math.log1p(userDamping) * 0.45 + 0.05, 0, 4);
+    const frequencyHz = clamp((userStiffness * 0.12) / flexibilityFactor, 0, 30);
+    const dampingRatio = clamp(userDamping * 0.06 + 0.05, 0, 8);
     return {
       frequencyHz,
       dampingRatio,
@@ -181,9 +178,9 @@ export class Twig {
     const angleLimit = this.getSafeAngleLimitRadians();
     const userStiffness = Number.isFinite(this.tuning.jointStiffness) ? Math.max(0, this.tuning.jointStiffness) : 0;
     const userDamping = Number.isFinite(this.tuning.jointDamping) ? Math.max(0, this.tuning.jointDamping) : 0;
-    const limitSpring = clamp((Math.log1p(userStiffness) + 0.2) * 18, 2, 120);
-    const limitDamping = clamp((Math.log1p(userDamping) + 0.1) * 3.2, 0.2, 25);
-    const maxLimitTorque = clamp(0.4 + Math.log1p(userStiffness + 1) * 4 + Math.log1p(userDamping + 1) * 4, 0.4, 80);
+    const limitSpring = clamp(userStiffness * 1.1 + 2, 2, 500);
+    const limitDamping = clamp(userDamping * 0.7 + 0.2, 0.2, 120);
+    const maxLimitTorque = clamp(0.4 + userStiffness * 0.6 + userDamping * 0.8, 0.4, 300);
 
     for (let i = 0; i < this.bodies.length - 1; i += 1) {
       const bodyA = this.bodies[i];
