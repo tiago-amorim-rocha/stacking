@@ -215,6 +215,68 @@ const normalizeVerticesArea = (vertices: b2Vec2[], targetArea: number) => {
   return scaleVertices(vertices, scale, scale);
 };
 
+const MIN_VERTEX_ANGLE_DEGREES = 65;
+const ANGLE_SOFTENING_ITERATIONS = 4;
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+const getVertexInteriorAngle = (vertices: b2Vec2[], index: number) => {
+  const prev = vertices[(index - 1 + vertices.length) % vertices.length];
+  const current = vertices[index];
+  const next = vertices[(index + 1) % vertices.length];
+
+  const ax = prev.x - current.x;
+  const ay = prev.y - current.y;
+  const bx = next.x - current.x;
+  const by = next.y - current.y;
+
+  const magnitudeA = Math.hypot(ax, ay);
+  const magnitudeB = Math.hypot(bx, by);
+  if (magnitudeA < 0.0001 || magnitudeB < 0.0001) {
+    return Math.PI;
+  }
+
+  const dot = clamp((ax * bx + ay * by) / (magnitudeA * magnitudeB), -1, 1);
+  return Math.acos(dot);
+};
+
+const enforceMinimumVertexAngle = (vertices: b2Vec2[], minimumAngleDegrees = MIN_VERTEX_ANGLE_DEGREES) => {
+  const minimumAngle = (minimumAngleDegrees * Math.PI) / 180;
+  let currentVertices = vertices.map((vertex) => new b2Vec2(vertex.x, vertex.y));
+
+  for (let iteration = 0; iteration < ANGLE_SOFTENING_ITERATIONS; iteration += 1) {
+    let changed = false;
+    const nextVertices = currentVertices.map((vertex) => new b2Vec2(vertex.x, vertex.y));
+
+    for (let i = 0; i < currentVertices.length; i += 1) {
+      const angle = getVertexInteriorAngle(currentVertices, i);
+      if (angle >= minimumAngle) {
+        continue;
+      }
+
+      const prev = currentVertices[(i - 1 + currentVertices.length) % currentVertices.length];
+      const vertex = currentVertices[i];
+      const next = currentVertices[(i + 1) % currentVertices.length];
+      const midpoint = new b2Vec2((prev.x + next.x) * 0.5, (prev.y + next.y) * 0.5);
+      const deficitRatio = clamp((minimumAngle - angle) / minimumAngle, 0, 1);
+      const blend = 0.2 + deficitRatio * 0.45;
+
+      nextVertices[i] = new b2Vec2(
+        vertex.x + (midpoint.x - vertex.x) * blend,
+        vertex.y + (midpoint.y - vertex.y) * blend,
+      );
+      changed = true;
+    }
+
+    currentVertices = nextVertices;
+    if (!changed) {
+      break;
+    }
+  }
+
+  return currentVertices;
+};
+
 const createLongOrganicShape = () => {
   const length = 2.2 + Math.random() * 1.5;
   const thickness = 0.32 + Math.random() * 0.4;
@@ -300,7 +362,8 @@ const createTemplate = (): PieceTemplate => {
     createRoundedTriShape,
   ];
   const chosenShape = shapeBuilders[Math.floor(Math.random() * shapeBuilders.length)]();
-  const normalizedVertices = normalizeVerticesArea(chosenShape, 1.35 + Math.random() * 0.22);
+  const lessPointyShape = enforceMinimumVertexAngle(chosenShape);
+  const normalizedVertices = normalizeVerticesArea(lessPointyShape, 1.35 + Math.random() * 0.22);
   return {
     id: `piece-${pieceCounter}`,
     vertices: normalizedVertices,
