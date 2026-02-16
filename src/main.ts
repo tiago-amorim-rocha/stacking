@@ -32,6 +32,7 @@ const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) {
   throw new Error('Missing #app container');
 }
+app.style.position = 'relative';
 
 const canvas = document.createElement('canvas');
 const context = canvas.getContext('2d');
@@ -210,6 +211,259 @@ const TWIG_TUNING = {
   angularDamping: DEFAULT_TWIG_TUNING.angularDamping,
 };
 
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+const tuningButton = document.createElement('button');
+tuningButton.type = 'button';
+tuningButton.textContent = 'Twig Tuning';
+tuningButton.style.position = 'absolute';
+tuningButton.style.top = '16px';
+tuningButton.style.right = '16px';
+tuningButton.style.zIndex = '20';
+tuningButton.style.border = '1px solid #3b4e7f';
+tuningButton.style.background = '#151f35';
+tuningButton.style.color = '#f4f7ff';
+tuningButton.style.borderRadius = '10px';
+tuningButton.style.padding = '10px 14px';
+tuningButton.style.font = '600 14px system-ui, -apple-system, Segoe UI, sans-serif';
+tuningButton.style.cursor = 'pointer';
+tuningButton.style.boxShadow = '0 6px 16px rgba(0,0,0,0.28)';
+
+const tuningPanel = document.createElement('div');
+tuningPanel.style.position = 'absolute';
+tuningPanel.style.top = '62px';
+tuningPanel.style.right = '16px';
+tuningPanel.style.zIndex = '21';
+tuningPanel.style.width = '280px';
+tuningPanel.style.maxWidth = 'calc(100vw - 24px)';
+tuningPanel.style.border = '1px solid #3b4e7f';
+tuningPanel.style.background = 'rgba(16, 24, 42, 0.95)';
+tuningPanel.style.color = '#eef3ff';
+tuningPanel.style.borderRadius = '12px';
+tuningPanel.style.padding = '12px';
+tuningPanel.style.backdropFilter = 'blur(4px)';
+tuningPanel.style.boxShadow = '0 10px 26px rgba(0,0,0,0.35)';
+tuningPanel.style.display = 'none';
+tuningPanel.style.userSelect = 'none';
+tuningPanel.style.font = '500 13px system-ui, -apple-system, Segoe UI, sans-serif';
+
+const panelHeader = document.createElement('div');
+panelHeader.style.display = 'flex';
+panelHeader.style.alignItems = 'center';
+panelHeader.style.justifyContent = 'space-between';
+panelHeader.style.marginBottom = '10px';
+
+const panelTitle = document.createElement('strong');
+panelTitle.textContent = 'Twig Tuning';
+panelTitle.style.fontSize = '14px';
+panelTitle.style.letterSpacing = '0.01em';
+
+const closeButton = document.createElement('button');
+closeButton.type = 'button';
+closeButton.textContent = 'Close';
+closeButton.style.border = '1px solid #4c5f92';
+closeButton.style.background = '#202d4d';
+closeButton.style.color = '#f2f6ff';
+closeButton.style.borderRadius = '8px';
+closeButton.style.padding = '4px 8px';
+closeButton.style.font = '600 12px system-ui, -apple-system, Segoe UI, sans-serif';
+closeButton.style.cursor = 'pointer';
+
+panelHeader.append(panelTitle, closeButton);
+tuningPanel.append(panelHeader);
+
+type TuningControl = {
+  input: HTMLInputElement;
+  valueLabel: HTMLSpanElement;
+  apply: (rawValue: number) => number;
+  format: (value: number) => string;
+};
+
+const tuningControls: TuningControl[] = [];
+
+const addTuningControl = (
+  label: string,
+  min: number,
+  max: number,
+  step: number,
+  initialValue: number,
+  apply: (rawValue: number) => number,
+  format = (value: number) => value.toFixed(step >= 1 ? 0 : 2),
+) => {
+  const row = document.createElement('label');
+  row.style.display = 'grid';
+  row.style.gridTemplateColumns = '1fr auto';
+  row.style.gap = '8px';
+  row.style.marginBottom = '10px';
+  row.style.alignItems = 'center';
+
+  const name = document.createElement('span');
+  name.textContent = label;
+  name.style.fontSize = '12px';
+  name.style.opacity = '0.95';
+
+  const valueLabel = document.createElement('span');
+  valueLabel.style.fontSize = '12px';
+  valueLabel.style.color = '#b8cbff';
+  valueLabel.style.fontVariantNumeric = 'tabular-nums';
+
+  const input = document.createElement('input');
+  input.type = 'range';
+  input.min = String(min);
+  input.max = String(max);
+  input.step = String(step);
+  input.value = String(initialValue);
+  input.style.gridColumn = '1 / -1';
+  input.style.width = '100%';
+
+  row.append(name, valueLabel, input);
+  tuningPanel.append(row);
+
+  const control: TuningControl = {
+    input,
+    valueLabel,
+    apply,
+    format,
+  };
+  tuningControls.push(control);
+  return control;
+};
+
+const applyTwigTuningToWorld = () => {
+  for (const twigObject of twigs) {
+    twigObject.tuning = {
+      angleLimitDeg: TWIG_TUNING.angleLimitDeg,
+      jointStiffness: TWIG_TUNING.jointStiffness,
+      jointDamping: TWIG_TUNING.jointDamping,
+      angularDamping: TWIG_TUNING.angularDamping,
+    };
+    twigObject.twig.setTuning(twigObject.tuning);
+  }
+};
+
+const segmentCountControl = addTuningControl(
+  'Segment Count',
+  8,
+  24,
+  1,
+  TWIG_TUNING.segmentCount,
+  (rawValue) => {
+    TWIG_TUNING.segmentCount = Math.round(clamp(rawValue, 8, 24));
+    return TWIG_TUNING.segmentCount;
+  },
+);
+
+const angleLimitControl = addTuningControl(
+  'Angle Limit (deg)',
+  4,
+  35,
+  1,
+  TWIG_TUNING.angleLimitDeg,
+  (rawValue) => {
+    TWIG_TUNING.angleLimitDeg = clamp(rawValue, 4, 35);
+    applyTwigTuningToWorld();
+    return TWIG_TUNING.angleLimitDeg;
+  },
+);
+
+const stiffnessControl = addTuningControl(
+  'Joint Stiffness',
+  1,
+  20,
+  0.1,
+  TWIG_TUNING.jointStiffness,
+  (rawValue) => {
+    TWIG_TUNING.jointStiffness = clamp(rawValue, 1, 20);
+    applyTwigTuningToWorld();
+    return TWIG_TUNING.jointStiffness;
+  },
+);
+
+const dampingControl = addTuningControl(
+  'Joint Damping',
+  0,
+  10,
+  0.1,
+  TWIG_TUNING.jointDamping,
+  (rawValue) => {
+    TWIG_TUNING.jointDamping = clamp(rawValue, 0, 10);
+    applyTwigTuningToWorld();
+    return TWIG_TUNING.jointDamping;
+  },
+);
+
+const angularDampingControl = addTuningControl(
+  'Body Angular Damping',
+  0,
+  6,
+  0.1,
+  TWIG_TUNING.angularDamping,
+  (rawValue) => {
+    TWIG_TUNING.angularDamping = clamp(rawValue, 0, 6);
+    applyTwigTuningToWorld();
+    return TWIG_TUNING.angularDamping;
+  },
+);
+
+const refreshTuningLabels = () => {
+  for (const control of tuningControls) {
+    const value = Number(control.input.value);
+    const applied = control.apply(value);
+    control.valueLabel.textContent = control.format(applied);
+  }
+};
+
+for (const control of tuningControls) {
+  control.input.addEventListener('input', () => {
+    refreshTuningLabels();
+  });
+}
+
+const panelActions = document.createElement('div');
+panelActions.style.display = 'flex';
+panelActions.style.gap = '8px';
+panelActions.style.marginTop = '6px';
+
+const resetButton = document.createElement('button');
+resetButton.type = 'button';
+resetButton.textContent = 'Reset Defaults';
+resetButton.style.flex = '1';
+resetButton.style.border = '1px solid #4c5f92';
+resetButton.style.background = '#202d4d';
+resetButton.style.color = '#f2f6ff';
+resetButton.style.borderRadius = '8px';
+resetButton.style.padding = '7px 9px';
+resetButton.style.font = '600 12px system-ui, -apple-system, Segoe UI, sans-serif';
+resetButton.style.cursor = 'pointer';
+
+panelActions.append(resetButton);
+tuningPanel.append(panelActions);
+
+const setTuningPanelOpen = (open: boolean) => {
+  tuningPanel.style.display = open ? 'block' : 'none';
+};
+
+tuningButton.addEventListener('click', () => {
+  const isOpen = tuningPanel.style.display === 'block';
+  setTuningPanelOpen(!isOpen);
+});
+
+closeButton.addEventListener('click', () => {
+  setTuningPanelOpen(false);
+});
+
+resetButton.addEventListener('click', () => {
+  segmentCountControl.input.value = String(TWIG_DEFAULT_SEGMENT_COUNT);
+  angleLimitControl.input.value = String(DEFAULT_TWIG_TUNING.angleLimitDeg);
+  stiffnessControl.input.value = String(DEFAULT_TWIG_TUNING.jointStiffness);
+  dampingControl.input.value = String(DEFAULT_TWIG_TUNING.jointDamping);
+  angularDampingControl.input.value = String(DEFAULT_TWIG_TUNING.angularDamping);
+  refreshTuningLabels();
+});
+
+refreshTuningLabels();
+app.append(tuningButton, tuningPanel);
+
 const cloneVec2 = (vector: b2Vec2) => new b2Vec2(vector.x, vector.y);
 
 const cloneTemplate = (template: PieceTemplate): PieceTemplate => (template.kind === 'rigid'
@@ -325,8 +579,6 @@ const normalizeVerticesArea = (vertices: b2Vec2[], targetArea: number) => {
 
 const MIN_VERTEX_ANGLE_DEGREES = 65;
 const ANGLE_SOFTENING_ITERATIONS = 4;
-
-const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
 const getVertexInteriorAngle = (vertices: b2Vec2[], index: number) => {
   const prev = vertices[(index - 1 + vertices.length) % vertices.length];
