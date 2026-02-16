@@ -90,6 +90,25 @@ type DraftPiece = {
   angle: number;
 };
 
+type SnapshotShape = {
+  id: string;
+  color: string;
+  vertices: b2Vec2[];
+  position: b2Vec2;
+  angle: number;
+  linearVelocity: b2Vec2;
+  angularVelocity: number;
+};
+
+type UndoSnapshot = {
+  shapes: SnapshotShape[];
+  drafts: DraftPiece[];
+  palette: Array<PieceTemplate | undefined>;
+  selectedObject: SelectedObject | undefined;
+  worldShapeCounter: number;
+  draftCounter: number;
+};
+
 type PieceCardLayout = {
   template: PieceTemplate | undefined;
   x: number;
@@ -121,6 +140,22 @@ let selectedObject: SelectedObject | undefined;
 let pieceCounter = 0;
 let draftCounter = 0;
 let worldShapeCounter = 0;
+let undoSnapshot: UndoSnapshot | undefined;
+
+const cloneVec2 = (vector: b2Vec2) => new b2Vec2(vector.x, vector.y);
+
+const cloneTemplate = (template: PieceTemplate): PieceTemplate => ({
+  id: template.id,
+  color: template.color,
+  vertices: template.vertices.map(cloneVec2),
+});
+
+const cloneDraft = (draft: DraftPiece): DraftPiece => ({
+  id: draft.id,
+  template: cloneTemplate(draft.template),
+  position: cloneVec2(draft.position),
+  angle: draft.angle,
+});
 
 const randomColor = () => `hsl(${Math.floor(Math.random() * 360)} 85% 65%)`;
 
@@ -380,6 +415,89 @@ const spawnPlacedShape = (template: PieceTemplate, position: b2Vec2, angle: numb
   });
 };
 
+const spawnSnapshotShape = (shape: SnapshotShape) => {
+  const body = world.CreateBody({
+    type: b2BodyType.b2_dynamicBody,
+    position: cloneVec2(shape.position),
+    angle: shape.angle,
+  });
+
+  const polygon = new b2PolygonShape();
+  polygon.Set(shape.vertices, shape.vertices.length);
+
+  const area = getPolygonArea(shape.vertices);
+  const density = TARGET_SHAPE_MASS / Math.max(area, 0.01);
+
+  body.CreateFixture({
+    shape: polygon,
+    density,
+    friction: 0.55,
+    restitution: 0.15,
+  });
+
+  body.SetLinearVelocity(cloneVec2(shape.linearVelocity));
+  body.SetAngularVelocity(shape.angularVelocity);
+
+  shapes.push({
+    id: shape.id,
+    body,
+    color: shape.color,
+    vertices: shape.vertices.map(cloneVec2),
+  });
+};
+
+const captureUndoSnapshot = (draftsBeforeApply: DraftPiece[]) => {
+  const resolvedSelectedObject = selectedObject?.kind === 'placement' && placement
+    ? { kind: 'draft', id: placement.draftId } as const
+    : selectedObject;
+
+  undoSnapshot = {
+    shapes: shapes.map((shape) => ({
+      id: shape.id,
+      color: shape.color,
+      vertices: shape.vertices.map(cloneVec2),
+      position: cloneVec2(shape.body.GetPosition()),
+      angle: shape.body.GetAngle(),
+      linearVelocity: cloneVec2(shape.body.GetLinearVelocity()),
+      angularVelocity: shape.body.GetAngularVelocity(),
+    })),
+    drafts: draftsBeforeApply.map(cloneDraft),
+    palette: palette.map((template) => (template ? cloneTemplate(template) : undefined)),
+    selectedObject: resolvedSelectedObject,
+    worldShapeCounter,
+    draftCounter,
+  };
+};
+
+const restoreUndoSnapshot = () => {
+  if (!undoSnapshot) {
+    return;
+  }
+
+  for (const shape of shapes) {
+    world.DestroyBody(shape.body);
+  }
+  shapes.length = 0;
+
+  for (const snapshotShape of undoSnapshot.shapes) {
+    spawnSnapshotShape(snapshotShape);
+  }
+
+  drafts = undoSnapshot.drafts.map(cloneDraft);
+  palette = undoSnapshot.palette.map((template) => (template ? cloneTemplate(template) : undefined));
+  selectedObject = undoSnapshot.selectedObject;
+  worldShapeCounter = undoSnapshot.worldShapeCounter;
+  draftCounter = undoSnapshot.draftCounter;
+
+  placement = undefined;
+  worldManipulation = undefined;
+  gesture = undefined;
+  activePointers.clear();
+  undoSnapshot = undefined;
+
+  rebuildMenuLayout();
+};
+
 const drawPolygon = (vertices: b2Vec2[]) => {
   context.beginPath();
   vertices.forEach((v, i) => {
@@ -486,7 +604,8 @@ const renderMenu = () => {
   context.stroke();
 
   const canApply = Boolean(placement) || drafts.length > 0;
-  context.fillStyle = canApply ? '#2dbf6e' : '#4c5a76';
+  const canUndo = Boolean(undoSnapshot);
+  context.fillStyle = canUndo ? '#d68a2d' : canApply ? '#2dbf6e' : '#4c5a76';
   context.beginPath();
   context.arc(
     applyButtonRect.x + applyButtonRect.width / 2,
@@ -497,16 +616,34 @@ const renderMenu = () => {
   );
   context.fill();
 
-  context.fillStyle = 'white';
-  context.beginPath();
   const cx = applyButtonRect.x + applyButtonRect.width / 2;
   const cy = applyButtonRect.y + applyButtonRect.height / 2;
   const iconSize = applyButtonRect.width * 0.34;
-  context.moveTo(cx - iconSize * 0.45, cy - iconSize * 0.85);
-  context.lineTo(cx - iconSize * 0.45, cy + iconSize * 0.85);
-  context.lineTo(cx + iconSize * 0.95, cy);
-  context.closePath();
-  context.fill();
+
+  context.fillStyle = 'white';
+  context.strokeStyle = 'white';
+
+  if (canUndo) {
+    context.lineWidth = 5;
+    context.lineCap = 'round';
+    context.beginPath();
+    context.arc(cx, cy, iconSize * 0.88, Math.PI * 0.1, Math.PI * 1.3, true);
+    context.stroke();
+
+    context.beginPath();
+    context.moveTo(cx - iconSize * 0.9, cy - iconSize * 0.4);
+    context.lineTo(cx - iconSize * 1.25, cy - iconSize * 0.75);
+    context.lineTo(cx - iconSize * 0.7, cy - iconSize * 0.9);
+    context.closePath();
+    context.fill();
+  } else {
+    context.beginPath();
+    context.moveTo(cx - iconSize * 0.45, cy - iconSize * 0.85);
+    context.lineTo(cx - iconSize * 0.45, cy + iconSize * 0.85);
+    context.lineTo(cx + iconSize * 0.95, cy);
+    context.closePath();
+    context.fill();
+  }
 
   for (const card of paletteCards) {
     context.fillStyle = '#1b2540';
@@ -877,12 +1014,23 @@ const updatePlacementFromPointers = () => {
 };
 
 const applyDrafts = () => {
-  if (placement) {
-    commitActivePlacementToDraft();
+  const draftsToApply = placement
+    ? [...drafts, {
+      id: placement.draftId,
+      template: placement.template,
+      position: placement.position,
+      angle: placement.angle,
+    }]
+    : drafts;
+
+  if (draftsToApply.length === 0) {
+    return;
   }
 
-  if (drafts.length === 0) {
-    return;
+  captureUndoSnapshot(draftsToApply);
+
+  if (placement) {
+    commitActivePlacementToDraft();
   }
 
   for (const draft of drafts) {
@@ -901,7 +1049,11 @@ canvas.addEventListener('pointerdown', (event) => {
   const worldPoint = toWorldFromCanvas(x, y);
 
   if (inRect(x, y, applyButtonRect)) {
-    applyDrafts();
+    if (undoSnapshot) {
+      restoreUndoSnapshot();
+    } else {
+      applyDrafts();
+    }
     activePointers.clear();
     gesture = undefined;
     render();
