@@ -283,12 +283,10 @@ const tuningControls: TuningControl[] = [];
 
 const addTuningControl = (
   label: string,
-  min: number,
-  max: number,
   step: number,
   initialValue: number,
   apply: (rawValue: number) => number,
-  format = (value: number) => value.toFixed(step >= 1 ? 0 : 2),
+  format = (value: number) => (Number.isInteger(value) ? String(value) : value.toFixed(4).replace(/\.?0+$/, '')),
 ) => {
   const row = document.createElement('label');
   row.style.display = 'grid';
@@ -308,11 +306,16 @@ const addTuningControl = (
   valueLabel.style.fontVariantNumeric = 'tabular-nums';
 
   const input = document.createElement('input');
-  input.type = 'range';
-  input.min = String(min);
-  input.max = String(max);
+  input.type = 'number';
   input.step = String(step);
   input.value = String(initialValue);
+  input.inputMode = 'decimal';
+  input.style.padding = '6px 8px';
+  input.style.borderRadius = '7px';
+  input.style.border = '1px solid #4c5f92';
+  input.style.background = '#202d4d';
+  input.style.color = '#f2f6ff';
+  input.style.font = '600 12px system-ui, -apple-system, Segoe UI, sans-serif';
   input.style.gridColumn = '1 / -1';
   input.style.width = '100%';
 
@@ -343,24 +346,20 @@ const applyTwigTuningToWorld = () => {
 
 const segmentCountControl = addTuningControl(
   'Segment Count',
-  8,
-  24,
   1,
   TWIG_TUNING.segmentCount,
   (rawValue) => {
-    TWIG_TUNING.segmentCount = Math.round(clamp(rawValue, 8, 24));
+    TWIG_TUNING.segmentCount = Math.max(1, Math.round(rawValue));
     return TWIG_TUNING.segmentCount;
   },
 );
 
 const angleLimitControl = addTuningControl(
   'Angle Limit (deg)',
-  4,
-  35,
-  1,
+  0.01,
   TWIG_TUNING.angleLimitDeg,
   (rawValue) => {
-    TWIG_TUNING.angleLimitDeg = clamp(rawValue, 4, 35);
+    TWIG_TUNING.angleLimitDeg = rawValue;
     applyTwigTuningToWorld();
     return TWIG_TUNING.angleLimitDeg;
   },
@@ -368,12 +367,10 @@ const angleLimitControl = addTuningControl(
 
 const stiffnessControl = addTuningControl(
   'Joint Stiffness',
-  1,
-  20,
-  0.1,
+  0.01,
   TWIG_TUNING.jointStiffness,
   (rawValue) => {
-    TWIG_TUNING.jointStiffness = clamp(rawValue, 1, 20);
+    TWIG_TUNING.jointStiffness = rawValue;
     applyTwigTuningToWorld();
     return TWIG_TUNING.jointStiffness;
   },
@@ -381,12 +378,10 @@ const stiffnessControl = addTuningControl(
 
 const dampingControl = addTuningControl(
   'Joint Damping',
-  0,
-  10,
-  0.1,
+  0.01,
   TWIG_TUNING.jointDamping,
   (rawValue) => {
-    TWIG_TUNING.jointDamping = clamp(rawValue, 0, 10);
+    TWIG_TUNING.jointDamping = rawValue;
     applyTwigTuningToWorld();
     return TWIG_TUNING.jointDamping;
   },
@@ -394,12 +389,10 @@ const dampingControl = addTuningControl(
 
 const angularDampingControl = addTuningControl(
   'Body Angular Damping',
-  0,
-  6,
-  0.1,
+  0.01,
   TWIG_TUNING.angularDamping,
   (rawValue) => {
-    TWIG_TUNING.angularDamping = clamp(rawValue, 0, 6);
+    TWIG_TUNING.angularDamping = rawValue;
     applyTwigTuningToWorld();
     return TWIG_TUNING.angularDamping;
   },
@@ -408,6 +401,10 @@ const angularDampingControl = addTuningControl(
 const refreshTuningLabels = () => {
   for (const control of tuningControls) {
     const value = Number(control.input.value);
+    if (!Number.isFinite(value)) {
+      control.valueLabel.textContent = 'invalid';
+      continue;
+    }
     const applied = control.apply(value);
     control.valueLabel.textContent = control.format(applied);
   }
@@ -734,7 +731,9 @@ const createRigidTemplate = (): RigidPieceTemplate => {
 
 const createTwigTemplate = (): TwigPieceTemplate => {
   pieceCounter += 1;
-  const segmentCount = Math.max(10, TWIG_TUNING.segmentCount + Math.floor(Math.random() * (TWIG_SEGMENT_COUNT_VARIATION * 2 + 1)) - TWIG_SEGMENT_COUNT_VARIATION);
+  const segmentCount = Math.max(1, Math.round(
+    TWIG_TUNING.segmentCount + Math.floor(Math.random() * (TWIG_SEGMENT_COUNT_VARIATION * 2 + 1)) - TWIG_SEGMENT_COUNT_VARIATION,
+  ));
   return {
     kind: 'twig',
     id: `piece-${pieceCounter}`,
