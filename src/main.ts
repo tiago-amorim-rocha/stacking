@@ -178,7 +178,7 @@ const normalizeVerticesArea = (vertices: b2Vec2[], targetArea: number) => {
 
 const createLongOrganicShape = () => {
   const length = 2.2 + Math.random() * 1.5;
-  const thickness = 0.24 + Math.random() * 0.44;
+  const thickness = 0.32 + Math.random() * 0.4;
   const halfLength = length / 2;
   const topTilt = 0.08 + Math.random() * 0.25;
   const bottomTilt = 0.1 + Math.random() * 0.22;
@@ -187,16 +187,16 @@ const createLongOrganicShape = () => {
     new b2Vec2(-halfLength * (0.98 + Math.random() * 0.12), -thickness * (0.58 + Math.random() * 0.28)),
     new b2Vec2(-halfLength * (0.35 + Math.random() * 0.2), -thickness * (1.0 + topTilt)),
     new b2Vec2(halfLength * (0.35 + Math.random() * 0.2), -thickness * (0.82 + Math.random() * 0.24)),
-    new b2Vec2(halfLength * (0.96 + Math.random() * 0.1), -thickness * (0.1 + Math.random() * 0.24)),
+    new b2Vec2(halfLength * (0.94 + Math.random() * 0.08), -thickness * (0.3 + Math.random() * 0.22)),
     new b2Vec2(halfLength * (0.72 + Math.random() * 0.18), thickness * (0.7 + bottomTilt)),
     new b2Vec2(-halfLength * (0.12 + Math.random() * 0.25), thickness * (1.0 + Math.random() * 0.2)),
-    new b2Vec2(-halfLength * (0.94 + Math.random() * 0.12), thickness * (0.58 + Math.random() * 0.28)),
+    new b2Vec2(-halfLength * (0.92 + Math.random() * 0.1), thickness * (0.62 + Math.random() * 0.24)),
   ];
 };
 
 const createUltraLongOrganicShape = () => {
   const length = 3.5 + Math.random() * 2.6;
-  const thickness = 0.1 + Math.random() * 0.16;
+  const thickness = 0.18 + Math.random() * 0.2;
   const halfLength = length / 2;
   const topTilt = 0.08 + Math.random() * 0.28;
   const bottomTilt = 0.08 + Math.random() * 0.26;
@@ -205,10 +205,10 @@ const createUltraLongOrganicShape = () => {
     new b2Vec2(-halfLength * (0.98 + Math.random() * 0.1), -thickness * (0.58 + Math.random() * 0.24)),
     new b2Vec2(-halfLength * (0.4 + Math.random() * 0.18), -thickness * (1.0 + topTilt)),
     new b2Vec2(halfLength * (0.36 + Math.random() * 0.16), -thickness * (0.8 + Math.random() * 0.2)),
-    new b2Vec2(halfLength * (0.98 + Math.random() * 0.08), -thickness * (0.12 + Math.random() * 0.2)),
+    new b2Vec2(halfLength * (0.94 + Math.random() * 0.06), -thickness * (0.34 + Math.random() * 0.22)),
     new b2Vec2(halfLength * (0.7 + Math.random() * 0.16), thickness * (0.72 + bottomTilt)),
     new b2Vec2(-halfLength * (0.15 + Math.random() * 0.2), thickness * (0.98 + Math.random() * 0.2)),
-    new b2Vec2(-halfLength * (0.96 + Math.random() * 0.1), thickness * (0.6 + Math.random() * 0.24)),
+    new b2Vec2(-halfLength * (0.94 + Math.random() * 0.08), thickness * (0.64 + Math.random() * 0.22)),
   ];
 };
 
@@ -222,11 +222,11 @@ const createSquarishOrganicShape = () => {
     new b2Vec2(-hw * (0.95 + Math.random() * 0.14), -hh * (0.72 + Math.random() * 0.24)),
     new b2Vec2(-hw * (0.15 + Math.random() * 0.25), -hh * (1.0 + Math.random() * 0.22)),
     new b2Vec2(hw * (0.72 + Math.random() * 0.22), -hh * (0.84 + Math.random() * 0.24)),
-    new b2Vec2(hw * (1.0 + Math.random() * 0.12), -hh * (0.08 + Math.random() * 0.24)),
+    new b2Vec2(hw * (0.96 + Math.random() * 0.1), -hh * (0.28 + Math.random() * 0.22)),
     new b2Vec2(hw * (0.7 + Math.random() * 0.24), hh * (0.75 + Math.random() * 0.24)),
     new b2Vec2(hw * (0.08 + Math.random() * 0.24), hh * (1.0 + Math.random() * 0.2)),
     new b2Vec2(-hw * (0.82 + Math.random() * 0.18), hh * (0.78 + Math.random() * 0.24)),
-    new b2Vec2(-hw * (1.0 + Math.random() * 0.12), hh * (0.08 + Math.random() * 0.24)),
+    new b2Vec2(-hw * (0.96 + Math.random() * 0.1), hh * (0.28 + Math.random() * 0.22)),
   ];
 };
 
