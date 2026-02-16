@@ -27,6 +27,3 @@
 - **Version metadata + update checks**:
   - Runtime checks `version.json` to detect new deployments.
   - GitHub Pages workflow (`.github/workflows/deploy-pages.yml`) writes fresh `dist/version.json` and `dist/version.txt` during deploy.
-
-### Notes
-- Active app code is in `src/` and built with Vite.
