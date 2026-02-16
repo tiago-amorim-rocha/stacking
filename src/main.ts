@@ -11,7 +11,8 @@ import {
 
 const PHYSICS_SCALE = 30;
 const TIME_STEP = 1 / 60;
-const STEP_CONFIG = { velocityIterations: 8, positionIterations: 3 } as const;
+const STEP_CONFIG = { velocityIterations: 10, positionIterations: 6 } as const;
+const TWIG_PHYSICS_SUBSTEPS = 2;
 const MAX_DEVICE_PIXEL_RATIO = 2;
 const MIN_WORLD_WIDTH_METERS = 0;
 const SIDE_PADDING_PX = 0;
@@ -26,7 +27,6 @@ const MAX_WHEEL_ROTATION_STEP_RAD = Math.PI / 60;
 const TWIG_TEMPLATE_EVERY_N_SHAPES = 3;
 const WORLD_OBJECT_LIMIT = 100;
 const TWIG_DEFAULT_SEGMENT_COUNT = 12;
-const TWIG_SEGMENT_COUNT_VARIATION = 3;
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) {
@@ -731,9 +731,7 @@ const createRigidTemplate = (): RigidPieceTemplate => {
 
 const createTwigTemplate = (): TwigPieceTemplate => {
   pieceCounter += 1;
-  const segmentCount = Math.max(1, Math.round(
-    TWIG_TUNING.segmentCount + Math.floor(Math.random() * (TWIG_SEGMENT_COUNT_VARIATION * 2 + 1)) - TWIG_SEGMENT_COUNT_VARIATION,
-  ));
+  const segmentCount = Math.max(1, Math.round(TWIG_TUNING.segmentCount));
   return {
     kind: 'twig',
     id: `piece-${pieceCounter}`,
@@ -1997,10 +1995,14 @@ canvas.addEventListener('pointercancel', (event) => {
 const tick = () => {
   const physicsPaused = isPhysicsPaused();
   if (!physicsPaused) {
-    for (const twigObject of twigs) {
-      twigObject.twig.updateSoftness();
+    const subSteps = twigs.length > 0 ? TWIG_PHYSICS_SUBSTEPS : 1;
+    const subStepDelta = TIME_STEP / subSteps;
+    for (let i = 0; i < subSteps; i += 1) {
+      for (const twigObject of twigs) {
+        twigObject.twig.updateSoftness(subStepDelta);
+      }
+      world.Step(subStepDelta, STEP_CONFIG);
     }
-    world.Step(TIME_STEP, STEP_CONFIG);
   }
 
   trimWorldObjects();
