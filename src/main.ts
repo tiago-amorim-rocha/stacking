@@ -1,4 +1,6 @@
 import { initDebugOverlay } from './debugOverlay';
+import { DEFAULT_TWIG_TUNING, Twig, type TwigTuning } from './physics/Twig';
+import { buildTwigPreviewSegments, drawTwig, drawTwigPreview, pruneTwigRenderCache } from './render/twigRender';
 
 import {
   b2BodyType,
@@ -21,6 +23,10 @@ const APPLY_BUTTON_SIZE_PX = 64;
 const MENU_PREVIEW_WORLD_SCALE = 1;
 const WHEEL_ROTATION_RADIANS_PER_DELTA_Y = Math.PI / 5400;
 const MAX_WHEEL_ROTATION_STEP_RAD = Math.PI / 60;
+const TWIG_TEMPLATE_EVERY_N_SHAPES = 3;
+const WORLD_OBJECT_LIMIT = 100;
+const TWIG_DEFAULT_SEGMENT_COUNT = 12;
+const TWIG_SEGMENT_COUNT_VARIATION = 3;
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) {
@@ -43,17 +49,42 @@ initDebugOverlay();
 
 const world = b2World.Create(new b2Vec2(0, 10));
 type FallingShape = {
+  kind: 'rigid';
   id: string;
   body: ReturnType<typeof world.CreateBody>;
   color: string;
   vertices: b2Vec2[];
 };
 
-type PieceTemplate = {
+type TwigWorldObject = {
+  kind: 'twig';
+  id: string;
+  twig: Twig;
+  color: string;
+  length: number;
+  thickness: number;
+  segmentCount: number;
+  tuning: TwigTuning;
+};
+
+type RigidPieceTemplate = {
+  kind: 'rigid';
   id: string;
   vertices: b2Vec2[];
   color: string;
 };
+
+type TwigPieceTemplate = {
+  kind: 'twig';
+  id: string;
+  color: string;
+  length: number;
+  thickness: number;
+  segmentCount: number;
+  tuning: TwigTuning;
+};
+
+type PieceTemplate = RigidPieceTemplate | TwigPieceTemplate;
 
 type PlacementState = {
   template: PieceTemplate;
@@ -74,7 +105,7 @@ type GestureState = {
 };
 
 type WorldManipulationState = {
-  shape: FallingShape;
+  shape: FallingShape | TwigWorldObject;
   activePointerId: number | null;
   pointerOffset: b2Vec2;
 };
@@ -92,6 +123,7 @@ type DraftPiece = {
 };
 
 type SnapshotShape = {
+  kind: 'rigid';
   id: string;
   color: string;
   vertices: b2Vec2[];
@@ -101,8 +133,32 @@ type SnapshotShape = {
   angularVelocity: number;
 };
 
+type SnapshotTwigSegment = {
+  position: b2Vec2;
+  angle: number;
+  linearVelocity: b2Vec2;
+  angularVelocity: number;
+};
+
+type SnapshotTwig = {
+  kind: 'twig';
+  id: string;
+  color: string;
+  length: number;
+  thickness: number;
+  segmentCount: number;
+  tuning: TwigTuning;
+  segments: SnapshotTwigSegment[];
+};
+
+type SnapshotWorldObject = SnapshotShape | SnapshotTwig;
+
+type WorldObjectRef =
+  | { kind: 'rigid'; id: string }
+  | { kind: 'twig'; id: string };
+
 type UndoSnapshot = {
-  shapes: SnapshotShape[];
+  worldObjects: SnapshotWorldObject[];
   drafts: DraftPiece[];
   palette: Array<PieceTemplate | undefined>;
   selectedObject: SelectedObject | undefined;
@@ -120,6 +176,8 @@ type PieceCardLayout = {
 };
 
 const shapes: FallingShape[] = [];
+const twigs: TwigWorldObject[] = [];
+const worldObjectOrder: WorldObjectRef[] = [];
 const activePointers = new Map<number, b2Vec2>();
 
 let floorBody: ReturnType<typeof world.CreateBody> | undefined;
@@ -141,15 +199,35 @@ let selectedObject: SelectedObject | undefined;
 let pieceCounter = 0;
 let draftCounter = 0;
 let worldShapeCounter = 0;
+let randomizedTemplateCounter = 0;
 let undoSnapshot: UndoSnapshot | undefined;
+
+const TWIG_TUNING = {
+  segmentCount: TWIG_DEFAULT_SEGMENT_COUNT,
+  angleLimitDeg: DEFAULT_TWIG_TUNING.angleLimitDeg,
+  jointStiffness: DEFAULT_TWIG_TUNING.jointStiffness,
+  jointDamping: DEFAULT_TWIG_TUNING.jointDamping,
+  angularDamping: DEFAULT_TWIG_TUNING.angularDamping,
+};
 
 const cloneVec2 = (vector: b2Vec2) => new b2Vec2(vector.x, vector.y);
 
-const cloneTemplate = (template: PieceTemplate): PieceTemplate => ({
-  id: template.id,
-  color: template.color,
-  vertices: template.vertices.map(cloneVec2),
-});
+const cloneTemplate = (template: PieceTemplate): PieceTemplate => (template.kind === 'rigid'
+  ? {
+    kind: 'rigid',
+    id: template.id,
+    color: template.color,
+    vertices: template.vertices.map(cloneVec2),
+  }
+  : {
+    kind: 'twig',
+    id: template.id,
+    color: template.color,
+    length: template.length,
+    thickness: template.thickness,
+    segmentCount: template.segmentCount,
+    tuning: { ...template.tuning },
+  });
 
 const cloneDraft = (draft: DraftPiece): DraftPiece => ({
   id: draft.id,
@@ -184,6 +262,35 @@ const transformedVertices = (vertices: b2Vec2[], position: b2Vec2, angle: number
     position.x + cos * vertex.x - sin * vertex.y,
     position.y + sin * vertex.x + cos * vertex.y,
   ));
+};
+
+const pointInsideTwigSegments = (point: b2Vec2, segments: ReturnType<typeof buildTwigPreviewSegments>) => {
+  for (const segment of segments) {
+    const dx = point.x - segment.position.x;
+    const dy = point.y - segment.position.y;
+    const c = Math.cos(segment.angle);
+    const s = Math.sin(segment.angle);
+    const along = dx * c + dy * s;
+    const across = -dx * s + dy * c;
+    const halfLength = segment.length * 0.5;
+    const radius = segment.thickness * 0.56;
+
+    if (Math.abs(along) <= halfLength && Math.abs(across) <= radius) {
+      return true;
+    }
+
+    const distToStart = Math.hypot(along + halfLength, across);
+    if (distToStart <= radius) {
+      return true;
+    }
+
+    const distToEnd = Math.hypot(along - halfLength, across);
+    if (distToEnd <= radius) {
+      return true;
+    }
+  }
+
+  return false;
 };
 
 const isPointInPolygon = (point: b2Vec2, vertices: b2Vec2[]) => {
@@ -349,7 +456,7 @@ const createRoundedTriShape = () => {
   ];
 };
 
-const createTemplate = (): PieceTemplate => {
+const createRigidTemplate = (): RigidPieceTemplate => {
   pieceCounter += 1;
   const shapeBuilders = [
     createUltraLongOrganicShape,
@@ -366,10 +473,38 @@ const createTemplate = (): PieceTemplate => {
   const lessPointyShape = enforceMinimumVertexAngle(chosenShape);
   const normalizedVertices = normalizeVerticesArea(lessPointyShape, 1.35 + Math.random() * 0.22);
   return {
+    kind: 'rigid',
     id: `piece-${pieceCounter}`,
     vertices: normalizedVertices,
     color: randomColor(),
   };
+};
+
+const createTwigTemplate = (): TwigPieceTemplate => {
+  pieceCounter += 1;
+  const segmentCount = Math.max(10, TWIG_TUNING.segmentCount + Math.floor(Math.random() * (TWIG_SEGMENT_COUNT_VARIATION * 2 + 1)) - TWIG_SEGMENT_COUNT_VARIATION);
+  return {
+    kind: 'twig',
+    id: `piece-${pieceCounter}`,
+    color: randomColor(),
+    length: 3.8 + Math.random() * 2.3,
+    thickness: 0.24 + Math.random() * 0.16,
+    segmentCount,
+    tuning: {
+      angleLimitDeg: TWIG_TUNING.angleLimitDeg,
+      jointStiffness: TWIG_TUNING.jointStiffness,
+      jointDamping: TWIG_TUNING.jointDamping,
+      angularDamping: TWIG_TUNING.angularDamping,
+    },
+  };
+};
+
+const createTemplate = (): PieceTemplate => {
+  randomizedTemplateCounter += 1;
+  if (randomizedTemplateCounter % TWIG_TEMPLATE_EVERY_N_SHAPES === 0) {
+    return createTwigTemplate();
+  }
+  return createRigidTemplate();
 };
 
 const refillPalette = () => {
@@ -453,10 +588,22 @@ const resize = () => {
   rebuildMenuLayout();
 };
 
-const spawnPlacedShape = (template: PieceTemplate, position: b2Vec2, angle: number) => {
+const nextWorldObjectId = (prefix: 'world-shape' | 'world-twig') => {
+  worldShapeCounter += 1;
+  return `${prefix}-${worldShapeCounter}`;
+};
+
+const spawnPlacedRigidShape = (
+  template: RigidPieceTemplate,
+  position: b2Vec2,
+  angle: number,
+  explicitId?: string,
+  linearVelocity?: b2Vec2,
+  angularVelocity?: number,
+) => {
   const body = world.CreateBody({
     type: b2BodyType.b2_dynamicBody,
-    position,
+    position: cloneVec2(position),
     angle,
   });
 
@@ -473,45 +620,114 @@ const spawnPlacedShape = (template: PieceTemplate, position: b2Vec2, angle: numb
     restitution: 0.15,
   });
 
-  worldShapeCounter += 1;
+  if (linearVelocity) {
+    body.SetLinearVelocity(cloneVec2(linearVelocity));
+  }
+  if (angularVelocity !== undefined) {
+    body.SetAngularVelocity(angularVelocity);
+  }
 
-  shapes.push({
-    id: `world-shape-${worldShapeCounter}`,
+  const id = explicitId ?? nextWorldObjectId('world-shape');
+
+  const shape: FallingShape = {
+    kind: 'rigid',
+    id,
     body,
     color: template.color,
     vertices: template.vertices,
-  });
+  };
+  shapes.push(shape);
+  worldObjectOrder.push({ kind: 'rigid', id });
 };
 
-const spawnSnapshotShape = (shape: SnapshotShape) => {
-  const body = world.CreateBody({
-    type: b2BodyType.b2_dynamicBody,
-    position: cloneVec2(shape.position),
-    angle: shape.angle,
+const spawnPlacedTwig = (
+  template: TwigPieceTemplate,
+  position: b2Vec2,
+  angle: number,
+  explicitId?: string,
+  segmentStates?: SnapshotTwigSegment[],
+) => {
+  const twig = new Twig(
+    world,
+    cloneVec2(position),
+    template.length,
+    template.thickness,
+    template.segmentCount,
+    {
+      ...template.tuning,
+      initialAngle: angle,
+    },
+  );
+
+  if (segmentStates) {
+    const bodies = twig.getBodies();
+    for (let i = 0; i < Math.min(bodies.length, segmentStates.length); i += 1) {
+      const body = bodies[i];
+      const state = segmentStates[i];
+      body.SetTransformVec(cloneVec2(state.position), state.angle);
+      body.SetLinearVelocity(cloneVec2(state.linearVelocity));
+      body.SetAngularVelocity(state.angularVelocity);
+    }
+  }
+
+  const id = explicitId ?? nextWorldObjectId('world-twig');
+  twigs.push({
+    kind: 'twig',
+    id,
+    twig,
+    color: template.color,
+    length: template.length,
+    thickness: template.thickness,
+    segmentCount: template.segmentCount,
+    tuning: { ...template.tuning },
   });
+  worldObjectOrder.push({ kind: 'twig', id });
+};
 
-  const polygon = new b2PolygonShape();
-  polygon.Set(shape.vertices, shape.vertices.length);
+const spawnPlacedTemplate = (template: PieceTemplate, position: b2Vec2, angle: number) => {
+  if (template.kind === 'twig') {
+    spawnPlacedTwig(template, position, angle);
+    return;
+  }
+  spawnPlacedRigidShape(template, position, angle);
+};
 
-  const area = getPolygonArea(shape.vertices);
-  const density = TARGET_SHAPE_MASS / Math.max(area, 0.01);
+const spawnSnapshotObject = (snapshot: SnapshotWorldObject) => {
+  if (snapshot.kind === 'twig') {
+    const twigTemplate: TwigPieceTemplate = {
+      kind: 'twig',
+      id: snapshot.id,
+      color: snapshot.color,
+      length: snapshot.length,
+      thickness: snapshot.thickness,
+      segmentCount: snapshot.segmentCount,
+      tuning: { ...snapshot.tuning },
+    };
+    const center = snapshot.segments.length > 0
+      ? snapshot.segments.reduce((acc, segment) => new b2Vec2(acc.x + segment.position.x, acc.y + segment.position.y), new b2Vec2(0, 0))
+      : new b2Vec2(0, 0);
+    const spawnPosition = snapshot.segments.length > 0
+      ? new b2Vec2(center.x / snapshot.segments.length, center.y / snapshot.segments.length)
+      : new b2Vec2(0, 0);
+    const spawnAngle = snapshot.segments[0]?.angle ?? 0;
+    spawnPlacedTwig(twigTemplate, spawnPosition, spawnAngle, snapshot.id, snapshot.segments);
+    return;
+  }
 
-  body.CreateFixture({
-    shape: polygon,
-    density,
-    friction: 0.55,
-    restitution: 0.15,
-  });
-
-  body.SetLinearVelocity(cloneVec2(shape.linearVelocity));
-  body.SetAngularVelocity(shape.angularVelocity);
-
-  shapes.push({
-    id: shape.id,
-    body,
-    color: shape.color,
-    vertices: shape.vertices.map(cloneVec2),
-  });
+  const rigidTemplate: RigidPieceTemplate = {
+    kind: 'rigid',
+    id: snapshot.id,
+    color: snapshot.color,
+    vertices: snapshot.vertices.map(cloneVec2),
+  };
+  spawnPlacedRigidShape(
+    rigidTemplate,
+    snapshot.position,
+    snapshot.angle,
+    snapshot.id,
+    snapshot.linearVelocity,
+    snapshot.angularVelocity,
+  );
 };
 
 const captureUndoSnapshot = (draftsBeforeApply: DraftPiece[]) => {
@@ -519,8 +735,10 @@ const captureUndoSnapshot = (draftsBeforeApply: DraftPiece[]) => {
     ? { kind: 'draft', id: placement.draftId } as const
     : selectedObject;
 
-  undoSnapshot = {
-    shapes: shapes.map((shape) => ({
+  const rigidSnapshots = new Map<string, SnapshotShape>();
+  for (const shape of shapes) {
+    rigidSnapshots.set(shape.id, {
+      kind: 'rigid',
       id: shape.id,
       color: shape.color,
       vertices: shape.vertices.map(cloneVec2),
@@ -528,7 +746,41 @@ const captureUndoSnapshot = (draftsBeforeApply: DraftPiece[]) => {
       angle: shape.body.GetAngle(),
       linearVelocity: cloneVec2(shape.body.GetLinearVelocity()),
       angularVelocity: shape.body.GetAngularVelocity(),
-    })),
+    });
+  }
+
+  const twigSnapshots = new Map<string, SnapshotTwig>();
+  for (const twigObject of twigs) {
+    const segments = twigObject.twig.getBodies().map((body) => ({
+      position: cloneVec2(body.GetPosition()),
+      angle: body.GetAngle(),
+      linearVelocity: cloneVec2(body.GetLinearVelocity()),
+      angularVelocity: body.GetAngularVelocity(),
+    }));
+
+    twigSnapshots.set(twigObject.id, {
+      kind: 'twig',
+      id: twigObject.id,
+      color: twigObject.color,
+      length: twigObject.length,
+      thickness: twigObject.thickness,
+      segmentCount: twigObject.segmentCount,
+      tuning: { ...twigObject.tuning },
+      segments,
+    });
+  }
+
+  const worldObjects = worldObjectOrder.flatMap((item): SnapshotWorldObject[] => {
+    if (item.kind === 'rigid') {
+      const snapshot = rigidSnapshots.get(item.id);
+      return snapshot ? [snapshot] : [];
+    }
+    const snapshot = twigSnapshots.get(item.id);
+    return snapshot ? [snapshot] : [];
+  });
+
+  undoSnapshot = {
+    worldObjects,
     drafts: draftsBeforeApply.map(cloneDraft),
     palette: palette.map((template) => (template ? cloneTemplate(template) : undefined)),
     selectedObject: resolvedSelectedObject,
@@ -537,18 +789,29 @@ const captureUndoSnapshot = (draftsBeforeApply: DraftPiece[]) => {
   };
 };
 
-const restoreUndoSnapshot = () => {
-  if (!undoSnapshot) {
-    return;
-  }
-
+const destroyAllWorldObjects = () => {
   for (const shape of shapes) {
     world.DestroyBody(shape.body);
   }
   shapes.length = 0;
 
-  for (const snapshotShape of undoSnapshot.shapes) {
-    spawnSnapshotShape(snapshotShape);
+  for (const twigObject of twigs) {
+    twigObject.twig.destroy();
+  }
+  twigs.length = 0;
+  worldObjectOrder.length = 0;
+  pruneTwigRenderCache([]);
+};
+
+const restoreUndoSnapshot = () => {
+  if (!undoSnapshot) {
+    return;
+  }
+
+  destroyAllWorldObjects();
+
+  for (const snapshotObject of undoSnapshot.worldObjects) {
+    spawnSnapshotObject(snapshotObject);
   }
 
   drafts = undoSnapshot.drafts.map(cloneDraft);
@@ -564,6 +827,40 @@ const restoreUndoSnapshot = () => {
   undoSnapshot = undefined;
 
   rebuildMenuLayout();
+};
+
+const destroyWorldObject = (objectRef: WorldObjectRef) => {
+  if (objectRef.kind === 'rigid') {
+    const index = shapes.findIndex((shape) => shape.id === objectRef.id);
+    if (index !== -1) {
+      const [shape] = shapes.splice(index, 1);
+      world.DestroyBody(shape.body);
+    }
+  } else {
+    const index = twigs.findIndex((twigObject) => twigObject.id === objectRef.id);
+    if (index !== -1) {
+      const [twigObject] = twigs.splice(index, 1);
+      twigObject.twig.destroy();
+      pruneTwigRenderCache(twigs.map((entry) => entry.id));
+    }
+  }
+
+  if (selectedObject?.kind === 'world' && selectedObject.id === objectRef.id) {
+    selectedObject = undefined;
+  }
+  if (worldManipulation?.shape.id === objectRef.id) {
+    worldManipulation = undefined;
+  }
+};
+
+const trimWorldObjects = () => {
+  while (worldObjectOrder.length > WORLD_OBJECT_LIMIT) {
+    const oldest = worldObjectOrder.shift();
+    if (!oldest) {
+      break;
+    }
+    destroyWorldObject(oldest);
+  }
 };
 
 const drawPolygon = (vertices: b2Vec2[]) => {
@@ -592,6 +889,8 @@ const renderWorld = () => {
   context.save();
   context.translate(canvasWidth / 2, 0);
 
+  pruneTwigRenderCache(twigs.map((twigObject) => twigObject.id));
+
   for (const shape of shapes) {
     const position = shape.body.GetPosition();
     const angle = shape.body.GetAngle();
@@ -608,41 +907,83 @@ const renderWorld = () => {
     }
   }
 
+  for (const twigObject of twigs) {
+    const segmentTransforms = twigObject.twig.getSegmentTransforms();
+    drawTwig(
+      context,
+      twigObject.id,
+      segmentTransforms,
+      twigObject.color,
+      PHYSICS_SCALE,
+    );
+    if (selectedObject?.kind === 'world' && selectedObject.id === twigObject.id) {
+      drawTwigPreview(context, segmentTransforms, '#ffffff', PHYSICS_SCALE, 0.2);
+    }
+  }
+
   for (const draft of drafts) {
-    const previewVertices = transformedVertices(draft.template.vertices, draft.position, draft.angle);
-    context.fillStyle = `${draft.template.color}cc`;
-    drawPolygon(previewVertices);
-    context.fill();
+    if (draft.template.kind === 'twig') {
+      const previewSegments = buildTwigPreviewSegments(
+        draft.position,
+        draft.template.length,
+        draft.template.thickness,
+        draft.template.segmentCount,
+        draft.angle,
+      );
+      drawTwigPreview(context, previewSegments, draft.template.color, PHYSICS_SCALE, 0.86);
+      if (selectedObject?.kind === 'draft' && selectedObject.id === draft.id) {
+        drawTwigPreview(context, previewSegments, '#ffffff', PHYSICS_SCALE, 0.22);
+      }
+    } else {
+      const previewVertices = transformedVertices(draft.template.vertices, draft.position, draft.angle);
+      context.fillStyle = `${draft.template.color}cc`;
+      drawPolygon(previewVertices);
+      context.fill();
 
-    context.strokeStyle = '#ffffff88';
-    context.lineWidth = 2;
-    drawPolygon(previewVertices);
-    context.stroke();
-
-    if (selectedObject?.kind === 'draft' && selectedObject.id === draft.id) {
-      context.strokeStyle = '#fff';
-      context.lineWidth = 4;
+      context.strokeStyle = '#ffffff88';
+      context.lineWidth = 2;
       drawPolygon(previewVertices);
       context.stroke();
+
+      if (selectedObject?.kind === 'draft' && selectedObject.id === draft.id) {
+        context.strokeStyle = '#fff';
+        context.lineWidth = 4;
+        drawPolygon(previewVertices);
+        context.stroke();
+      }
     }
   }
 
   if (placement) {
-    const previewVertices = transformedVertices(placement.template.vertices, placement.position, placement.angle);
-    context.fillStyle = `${placement.template.color}cc`;
-    drawPolygon(previewVertices);
-    context.fill();
+    if (placement.template.kind === 'twig') {
+      const previewSegments = buildTwigPreviewSegments(
+        placement.position,
+        placement.template.length,
+        placement.template.thickness,
+        placement.template.segmentCount,
+        placement.angle,
+      );
+      drawTwigPreview(context, previewSegments, placement.template.color, PHYSICS_SCALE, 0.9);
+      if (selectedObject?.kind === 'placement' && selectedObject.id === placement.draftId) {
+        drawTwigPreview(context, previewSegments, '#ffffff', PHYSICS_SCALE, 0.25);
+      }
+    } else {
+      const previewVertices = transformedVertices(placement.template.vertices, placement.position, placement.angle);
+      context.fillStyle = `${placement.template.color}cc`;
+      drawPolygon(previewVertices);
+      context.fill();
 
-    context.strokeStyle = '#ffffffcc';
-    context.lineWidth = 2;
-    drawPolygon(previewVertices);
-    context.stroke();
-
-    if (selectedObject?.kind === 'placement' && selectedObject.id === placement.draftId) {
-      context.strokeStyle = '#fff';
-      context.lineWidth = 4;
+      context.strokeStyle = '#ffffffcc';
+      context.lineWidth = 2;
       drawPolygon(previewVertices);
       context.stroke();
+
+      if (selectedObject?.kind === 'placement' && selectedObject.id === placement.draftId) {
+        context.strokeStyle = '#fff';
+        context.lineWidth = 4;
+        drawPolygon(previewVertices);
+        context.stroke();
+      }
     }
   }
 
@@ -734,20 +1075,31 @@ const renderMenu = () => {
     context.clip();
     context.translate(centerX, centerY);
     context.scale(MENU_PREVIEW_WORLD_SCALE, MENU_PREVIEW_WORLD_SCALE);
-    context.fillStyle = card.template.color;
+    if (card.template.kind === 'twig') {
+      const previewSegments = buildTwigPreviewSegments(
+        new b2Vec2(0, 0),
+        card.template.length * 0.82,
+        card.template.thickness,
+        card.template.segmentCount,
+        0,
+      );
+      drawTwigPreview(context, previewSegments, card.template.color, PHYSICS_SCALE);
+    } else {
+      context.fillStyle = card.template.color;
 
-    context.beginPath();
-    card.template.vertices.forEach((vertex, index) => {
-      const x = vertex.x * PHYSICS_SCALE;
-      const y = vertex.y * PHYSICS_SCALE;
-      if (index === 0) {
-        context.moveTo(x, y);
-      } else {
-        context.lineTo(x, y);
-      }
-    });
-    context.closePath();
-    context.fill();
+      context.beginPath();
+      card.template.vertices.forEach((vertex, index) => {
+        const x = vertex.x * PHYSICS_SCALE;
+        const y = vertex.y * PHYSICS_SCALE;
+        if (index === 0) {
+          context.moveTo(x, y);
+        } else {
+          context.lineTo(x, y);
+        }
+      });
+      context.closePath();
+      context.fill();
+    }
     context.restore();
   }
 };
@@ -765,16 +1117,96 @@ const inRect = (x: number, y: number, rect: { x: number; y: number; width: numbe
 const draftAtPoint = (point: b2Vec2) => {
   for (let i = drafts.length - 1; i >= 0; i -= 1) {
     const draft = drafts[i];
-    const vertices = transformedVertices(draft.template.vertices, draft.position, draft.angle);
-    if (isPointInPolygon(point, vertices)) {
-      return draft;
+    if (draft.template.kind === 'twig') {
+      const twigSegments = buildTwigPreviewSegments(
+        draft.position,
+        draft.template.length,
+        draft.template.thickness,
+        draft.template.segmentCount,
+        draft.angle,
+      );
+      if (pointInsideTwigSegments(point, twigSegments)) {
+        return draft;
+      }
+    } else {
+      const vertices = transformedVertices(draft.template.vertices, draft.position, draft.angle);
+      if (isPointInPolygon(point, vertices)) {
+        return draft;
+      }
     }
   }
 
   return undefined;
 };
 
-const worldShapeAtPoint = (point: b2Vec2) => {
+const getTwigCenter = (twigObject: TwigWorldObject) => {
+  const bodies = twigObject.twig.getBodies();
+  if (bodies.length === 0) {
+    return new b2Vec2(0, 0);
+  }
+
+  const sum = bodies.reduce((acc, body) => {
+    const position = body.GetPosition();
+    return new b2Vec2(acc.x + position.x, acc.y + position.y);
+  }, new b2Vec2(0, 0));
+  return new b2Vec2(sum.x / bodies.length, sum.y / bodies.length);
+};
+
+const getTwigAverageAngle = (twigObject: TwigWorldObject) => {
+  const bodies = twigObject.twig.getBodies();
+  if (bodies.length === 0) {
+    return 0;
+  }
+
+  const sum = bodies.reduce((acc, body) => {
+    const angle = body.GetAngle();
+    return new b2Vec2(acc.x + Math.cos(angle), acc.y + Math.sin(angle));
+  }, new b2Vec2(0, 0));
+  return Math.atan2(sum.y, sum.x);
+};
+
+const setTwigPosition = (twigObject: TwigWorldObject, targetPosition: b2Vec2) => {
+  const currentCenter = getTwigCenter(twigObject);
+  const dx = targetPosition.x - currentCenter.x;
+  const dy = targetPosition.y - currentCenter.y;
+  for (const body of twigObject.twig.getBodies()) {
+    const position = body.GetPosition();
+    body.SetTransformVec(new b2Vec2(position.x + dx, position.y + dy), body.GetAngle());
+    body.SetAwake(true);
+  }
+};
+
+const setTwigAngle = (twigObject: TwigWorldObject, targetAngle: number) => {
+  const currentCenter = getTwigCenter(twigObject);
+  const currentAngle = getTwigAverageAngle(twigObject);
+  const delta = targetAngle - currentAngle;
+  const c = Math.cos(delta);
+  const s = Math.sin(delta);
+
+  for (const body of twigObject.twig.getBodies()) {
+    const position = body.GetPosition();
+    const relX = position.x - currentCenter.x;
+    const relY = position.y - currentCenter.y;
+    const rotatedRelX = relX * c - relY * s;
+    const rotatedRelY = relX * s + relY * c;
+    body.SetTransformVec(
+      new b2Vec2(currentCenter.x + rotatedRelX, currentCenter.y + rotatedRelY),
+      body.GetAngle() + delta,
+    );
+    body.SetLinearVelocity(new b2Vec2(0, 0));
+    body.SetAngularVelocity(0);
+    body.SetAwake(true);
+  }
+};
+
+const worldShapeAtPoint = (point: b2Vec2): FallingShape | TwigWorldObject | undefined => {
+  for (let i = twigs.length - 1; i >= 0; i -= 1) {
+    const twigObject = twigs[i];
+    if (pointInsideTwigSegments(point, twigObject.twig.getSegmentTransforms())) {
+      return twigObject;
+    }
+  }
+
   for (let i = shapes.length - 1; i >= 0; i -= 1) {
     const shape = shapes[i];
     const vertices = transformedVertices(shape.vertices, shape.body.GetPosition(), shape.body.GetAngle());
@@ -791,7 +1223,16 @@ const rotateTargetBy = (target: TransformTarget, deltaRadians: number) => {
 
   if (target.selected.kind === 'world') {
     const shape = shapes.find((candidate) => candidate.id === target.selected.id);
-    shape?.body.SetAwake(true);
+    if (shape) {
+      shape.body.SetAwake(true);
+      return;
+    }
+    const twigObject = twigs.find((candidate) => candidate.id === target.selected.id);
+    if (twigObject) {
+      for (const body of twigObject.twig.getBodies()) {
+        body.SetAwake(true);
+      }
+    }
   }
 };
 
@@ -830,11 +1271,19 @@ const commitActivePlacementToDraft = () => {
   selectedObject = { kind: 'draft', id: draftId };
 };
 
-const beginWorldManipulation = (shape: FallingShape, pointerId: number, pointerWorld: b2Vec2) => {
-  const shapePosition = shape.body.GetPosition();
-  shape.body.SetAwake(true);
-  shape.body.SetLinearVelocity(new b2Vec2(0, 0));
-  shape.body.SetAngularVelocity(0);
+const beginWorldManipulation = (shape: FallingShape | TwigWorldObject, pointerId: number, pointerWorld: b2Vec2) => {
+  const shapePosition = shape.kind === 'rigid' ? shape.body.GetPosition() : getTwigCenter(shape);
+  if (shape.kind === 'rigid') {
+    shape.body.SetAwake(true);
+    shape.body.SetLinearVelocity(new b2Vec2(0, 0));
+    shape.body.SetAngularVelocity(0);
+  } else {
+    for (const body of shape.twig.getBodies()) {
+      body.SetAwake(true);
+      body.SetLinearVelocity(new b2Vec2(0, 0));
+      body.SetAngularVelocity(0);
+    }
+  }
 
   worldManipulation = {
     shape,
@@ -850,7 +1299,8 @@ const beginSelectedObjectManipulation = (pointerId: number, pointerWorld: b2Vec2
   }
 
   if (selectedObject.kind === 'world') {
-    const shape = shapes.find((candidate) => candidate.id === selectedObject!.id);
+    const shape = shapes.find((candidate) => candidate.id === selectedObject!.id)
+      ?? twigs.find((candidate) => candidate.id === selectedObject!.id);
     if (!shape) {
       return false;
     }
@@ -922,15 +1372,24 @@ const currentManipulationTarget = (): TransformTarget | undefined => {
   }
 
   if (worldManipulation) {
+    const manipulatedShape = worldManipulation.shape;
     return {
-      selected: { kind: 'world', id: worldManipulation.shape.id },
-      getPosition: () => worldManipulation!.shape.body.GetPosition(),
-      getAngle: () => worldManipulation!.shape.body.GetAngle(),
+      selected: { kind: 'world', id: manipulatedShape.id },
+      getPosition: () => (manipulatedShape.kind === 'rigid' ? manipulatedShape.body.GetPosition() : getTwigCenter(manipulatedShape)),
+      getAngle: () => (manipulatedShape.kind === 'rigid' ? manipulatedShape.body.GetAngle() : getTwigAverageAngle(manipulatedShape)),
       setPosition: (position: b2Vec2) => {
-        worldManipulation!.shape.body.SetTransformVec(position, worldManipulation!.shape.body.GetAngle());
+        if (manipulatedShape.kind === 'rigid') {
+          manipulatedShape.body.SetTransformVec(position, manipulatedShape.body.GetAngle());
+        } else {
+          setTwigPosition(manipulatedShape, position);
+        }
       },
       setAngle: (angle: number) => {
-        worldManipulation!.shape.body.SetTransformVec(worldManipulation!.shape.body.GetPosition(), angle);
+        if (manipulatedShape.kind === 'rigid') {
+          manipulatedShape.body.SetTransformVec(manipulatedShape.body.GetPosition(), angle);
+        } else {
+          setTwigAngle(manipulatedShape, angle);
+        }
       },
       activePointerId: worldManipulation.activePointerId,
       pointerOffset: worldManipulation.pointerOffset,
@@ -1003,20 +1462,29 @@ const selectedTarget = (): TransformTarget | undefined => {
     };
   }
 
-  const shape = shapes.find((candidate) => candidate.id === selected.id);
+  const shape = shapes.find((candidate) => candidate.id === selected.id)
+    ?? twigs.find((candidate) => candidate.id === selected.id);
   if (!shape) {
     return undefined;
   }
 
   return {
     selected,
-    getPosition: () => shape.body.GetPosition(),
-    getAngle: () => shape.body.GetAngle(),
+    getPosition: () => (shape.kind === 'rigid' ? shape.body.GetPosition() : getTwigCenter(shape)),
+    getAngle: () => (shape.kind === 'rigid' ? shape.body.GetAngle() : getTwigAverageAngle(shape)),
     setPosition: (position: b2Vec2) => {
-      shape.body.SetTransformVec(position, shape.body.GetAngle());
+      if (shape.kind === 'rigid') {
+        shape.body.SetTransformVec(position, shape.body.GetAngle());
+      } else {
+        setTwigPosition(shape, position);
+      }
     },
     setAngle: (angle: number) => {
-      shape.body.SetTransformVec(shape.body.GetPosition(), angle);
+      if (shape.kind === 'rigid') {
+        shape.body.SetTransformVec(shape.body.GetPosition(), angle);
+      } else {
+        setTwigAngle(shape, angle);
+      }
     },
     activePointerId: null,
     pointerOffset: new b2Vec2(0, 0),
@@ -1102,7 +1570,7 @@ const applyDrafts = () => {
   }
 
   for (const draft of drafts) {
-    spawnPlacedShape(draft.template, draft.position, draft.angle);
+    spawnPlacedTemplate(draft.template, draft.position, draft.angle);
   }
 
   drafts = [];
@@ -1278,15 +1746,13 @@ canvas.addEventListener('pointercancel', (event) => {
 const tick = () => {
   const physicsPaused = isPhysicsPaused();
   if (!physicsPaused) {
+    for (const twigObject of twigs) {
+      twigObject.twig.updateSoftness();
+    }
     world.Step(TIME_STEP, STEP_CONFIG);
   }
 
-  if (shapes.length > 100) {
-    const removed = shapes.splice(0, shapes.length - 100);
-    for (const shape of removed) {
-      world.DestroyBody(shape.body);
-    }
-  }
+  trimWorldObjects();
 
   render();
   requestAnimationFrame(tick);
