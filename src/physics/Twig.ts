@@ -2,7 +2,6 @@ import {
   b2Body,
   b2AngularStiffness,
   b2BodyType,
-  b2MassData,
   b2PolygonShape,
   b2Vec2,
   b2WeldJoint,
@@ -15,7 +14,7 @@ export type TwigTuning = {
   weldStiffness: number;
   weldDamping: number;
   angularDamping: number;
-  mass: number;
+  densityMultiplier: number;
 };
 
 export type TwigSegmentTransform = {
@@ -36,7 +35,7 @@ export const DEFAULT_TWIG_TUNING: TwigTuning = {
   weldStiffness: 100,
   weldDamping: 20,
   angularDamping: 20,
-  mass: 2,
+  densityMultiplier: 1,
 };
 
 const FIXTURE_THICKNESS_SCALE = 1.18;
@@ -85,9 +84,7 @@ export class Twig {
     };
 
     const initialAngle = options.initialAngle ?? 0;
-    const segmentMass = Math.max(0.001, this.tuning.mass) / this.segmentCount;
-    const fixtureArea = this.segmentLength * this.fixtureThickness;
-    const density = segmentMass / Math.max(fixtureArea, 0.01);
+    const density = this.getSegmentDensity();
     const angleJitterRadians = toRadians(Math.max(0, options.segmentAngleJitterDeg ?? DEFAULT_SEGMENT_INITIAL_ANGLE_JITTER_DEG));
     const segmentAngles: number[] = [];
     let runningAngle = initialAngle;
@@ -178,17 +175,27 @@ export class Twig {
     };
   }
 
-  private applyMassDistribution() {
-    const totalMass = Number.isFinite(this.tuning.mass) ? Math.max(0.001, this.tuning.mass) : DEFAULT_TWIG_TUNING.mass;
-    const targetSegmentMass = totalMass / Math.max(1, this.bodies.length);
+  private getSafeDensityMultiplier() {
+    return Number.isFinite(this.tuning.densityMultiplier)
+      ? Math.max(0.001, this.tuning.densityMultiplier)
+      : DEFAULT_TWIG_TUNING.densityMultiplier;
+  }
 
+  private getSegmentDensity() {
+    const totalTwigFixtureArea = this.segmentLength * this.fixtureThickness * Math.max(1, this.segmentCount);
+    // Rigid shapes use density = TARGET_SHAPE_MASS / area with TARGET_SHAPE_MASS = 1.
+    // We mirror that here for the twig body and expose a multiplier on top.
+    const baseDensity = 1 / Math.max(totalTwigFixtureArea, 0.01);
+    return baseDensity * this.getSafeDensityMultiplier();
+  }
+
+  private applyDensityMultiplier() {
+    const density = this.getSegmentDensity();
     for (const body of this.bodies) {
-      const currentMass = Math.max(body.GetMass(), 0.0001);
-      const scale = targetSegmentMass / currentMass;
-      const massData = body.GetMassData(new b2MassData());
-      massData.mass = targetSegmentMass;
-      massData.I *= scale;
-      body.SetMassData(massData);
+      for (let fixture = body.GetFixtureList(); fixture; fixture = fixture.GetNext()) {
+        fixture.SetDensity(density);
+      }
+      body.ResetMassData();
       body.SetAwake(true);
     }
   }
@@ -198,7 +205,7 @@ export class Twig {
       ...this.tuning,
       ...tuning,
     };
-    this.applyMassDistribution();
+    this.applyDensityMultiplier();
     const weldProfile = this.computeWeldProfile();
     for (const body of this.bodies) {
       body.SetAngularDamping(this.getSafeAngularDamping());

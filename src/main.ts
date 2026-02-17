@@ -212,7 +212,7 @@ const TWIG_TUNING = {
   weldStiffness: DEFAULT_TWIG_TUNING.weldStiffness,
   weldDamping: DEFAULT_TWIG_TUNING.weldDamping,
   angularDamping: DEFAULT_TWIG_TUNING.angularDamping,
-  mass: DEFAULT_TWIG_TUNING.mass,
+  densityMultiplier: DEFAULT_TWIG_TUNING.densityMultiplier,
 };
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -345,7 +345,7 @@ const applyTwigTuningToWorld = () => {
       weldStiffness: TWIG_TUNING.weldStiffness,
       weldDamping: TWIG_TUNING.weldDamping,
       angularDamping: TWIG_TUNING.angularDamping,
-      mass: TWIG_TUNING.mass,
+      densityMultiplier: TWIG_TUNING.densityMultiplier,
     };
     twigObject.twig.setTuning(twigObject.tuning);
   }
@@ -405,14 +405,14 @@ const angularDampingControl = addTuningControl(
   },
 );
 
-const massControl = addTuningControl(
-  'Twig Total Mass',
+const densityMultiplierControl = addTuningControl(
+  'Twig Density Multiplier',
   0.01,
-  TWIG_TUNING.mass,
+  TWIG_TUNING.densityMultiplier,
   (rawValue) => {
-    TWIG_TUNING.mass = Math.max(0.001, rawValue);
+    TWIG_TUNING.densityMultiplier = Math.max(0.001, rawValue);
     applyTwigTuningToWorld();
-    return TWIG_TUNING.mass;
+    return TWIG_TUNING.densityMultiplier;
   },
 );
 
@@ -473,7 +473,7 @@ resetButton.addEventListener('click', () => {
   stiffnessControl.input.value = String(DEFAULT_TWIG_TUNING.weldStiffness);
   dampingControl.input.value = String(DEFAULT_TWIG_TUNING.weldDamping);
   angularDampingControl.input.value = String(DEFAULT_TWIG_TUNING.angularDamping);
-  massControl.input.value = String(DEFAULT_TWIG_TUNING.mass);
+  densityMultiplierControl.input.value = String(DEFAULT_TWIG_TUNING.densityMultiplier);
   refreshTuningLabels();
 });
 
@@ -763,7 +763,7 @@ const createTwigTemplate = (): TwigPieceTemplate => {
       weldStiffness: TWIG_TUNING.weldStiffness,
       weldDamping: TWIG_TUNING.weldDamping,
       angularDamping: TWIG_TUNING.angularDamping,
-      mass: TWIG_TUNING.mass,
+      densityMultiplier: TWIG_TUNING.densityMultiplier,
     },
   };
 };
