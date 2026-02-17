@@ -24,7 +24,7 @@ const APPLY_BUTTON_SIZE_PX = 64;
 const MENU_PREVIEW_WORLD_SCALE = 1;
 const WHEEL_ROTATION_RADIANS_PER_DELTA_Y = Math.PI / 5400;
 const MAX_WHEEL_ROTATION_STEP_RAD = Math.PI / 60;
-const TWIG_TEMPLATE_EVERY_N_SHAPES = 3;
+const TWIG_TEMPLATE_EVERY_N_SHAPES = 7;
 const WORLD_OBJECT_LIMIT = 100;
 const TWIG_DEFAULT_SEGMENT_COUNT = 6;
 const TWIG_DEFAULT_LENGTH = 4.9;
@@ -654,7 +654,7 @@ const enforceMinimumVertexAngle = (vertices: b2Vec2[], minimumAngleDegrees = MIN
 };
 
 const createLongOrganicShape = () => {
-  const length = 2.2 + Math.random() * 1.5;
+  const length = 2.0 + Math.random() * 1.1;
   const thickness = 0.32 + Math.random() * 0.4;
   const halfLength = length / 2;
   const topTilt = 0.08 + Math.random() * 0.25;
@@ -672,7 +672,7 @@ const createLongOrganicShape = () => {
 };
 
 const createUltraLongOrganicShape = () => {
-  const length = 3.5 + Math.random() * 2.6;
+  const length = 3.2 + Math.random() * 1.6;
   const thickness = 0.18 + Math.random() * 0.2;
   const halfLength = length / 2;
   const topTilt = 0.08 + Math.random() * 0.28;
