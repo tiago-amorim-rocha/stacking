@@ -24,7 +24,8 @@ const APPLY_BUTTON_SIZE_PX = 64;
 const MENU_PREVIEW_WORLD_SCALE = 1;
 const WHEEL_ROTATION_RADIANS_PER_DELTA_Y = Math.PI / 5400;
 const MAX_WHEEL_ROTATION_STEP_RAD = Math.PI / 60;
-const TWIG_TEMPLATE_EVERY_N_SHAPES = 7;
+const TWIG_TEMPLATE_TARGET_INTERVAL = 7;
+const TWIG_TEMPLATE_INTERVAL_VARIANCE = 3;
 const WORLD_OBJECT_LIMIT = 100;
 const TWIG_DEFAULT_SEGMENT_COUNT = 6;
 const TWIG_DEFAULT_LENGTH = 4.9;
@@ -204,6 +205,7 @@ let pieceCounter = 0;
 let draftCounter = 0;
 let worldShapeCounter = 0;
 let randomizedTemplateCounter = 0;
+let nextTwigTemplateAt = 0;
 let undoSnapshot: UndoSnapshot | undefined;
 
 const TWIG_TUNING = {
@@ -768,11 +770,25 @@ const createTwigTemplate = (): TwigPieceTemplate => {
   };
 };
 
+const pickNextTwigTemplateAt = () => {
+  const targetInterval = Math.max(1, Math.floor(TWIG_TEMPLATE_TARGET_INTERVAL));
+  const variance = Math.max(0, Math.floor(TWIG_TEMPLATE_INTERVAL_VARIANCE));
+  const minInterval = Math.max(1, targetInterval - variance);
+  const maxInterval = targetInterval + variance;
+  return randomizedTemplateCounter + minInterval + Math.floor(Math.random() * (maxInterval - minInterval + 1));
+};
+
 const createTemplate = (): PieceTemplate => {
   randomizedTemplateCounter += 1;
-  if (randomizedTemplateCounter % TWIG_TEMPLATE_EVERY_N_SHAPES === 0) {
+  if (nextTwigTemplateAt === 0) {
+    nextTwigTemplateAt = pickNextTwigTemplateAt();
+  }
+
+  if (randomizedTemplateCounter >= nextTwigTemplateAt) {
+    nextTwigTemplateAt = pickNextTwigTemplateAt();
     return createTwigTemplate();
   }
+
   return createRigidTemplate();
 };
 
