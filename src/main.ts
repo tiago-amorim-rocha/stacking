@@ -316,7 +316,9 @@ const addTuningControl = (
   input.style.border = '1px solid #4c5f92';
   input.style.background = '#202d4d';
   input.style.color = '#f2f6ff';
-  input.style.font = '600 12px system-ui, -apple-system, Segoe UI, sans-serif';
+  // iOS Safari auto-zooms focused inputs when font size is below 16px.
+  // Keep tuning inputs at 16px so opening the keyboard doesn't zoom the game canvas.
+  input.style.font = '600 16px system-ui, -apple-system, Segoe UI, sans-serif';
   input.style.gridColumn = '1 / -1';
   input.style.width = '100%';
 
