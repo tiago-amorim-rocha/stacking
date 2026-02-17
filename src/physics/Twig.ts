@@ -27,15 +27,16 @@ export type TwigSegmentTransform = {
 
 export type TwigOptions = Partial<TwigTuning> & {
   initialAngle?: number;
+  segmentAngleJitterDeg?: number;
   bulletSegments?: boolean;
 };
 
 export const DEFAULT_TWIG_TUNING: TwigTuning = {
-  angleLimitDeg: 15,
-  weldStiffness: 8,
-  weldDamping: 2.4,
-  angularDamping: 1.8,
-  mass: 1,
+  angleLimitDeg: 2,
+  weldStiffness: 100,
+  weldDamping: 20,
+  angularDamping: 20,
+  mass: 2,
 };
 
 const FIXTURE_THICKNESS_SCALE = 1.18;
@@ -45,15 +46,10 @@ const DEFAULT_STEP_SECONDS = 1 / 60;
 const MAX_ABS_ANGLE_LIMIT_DEG = 170;
 const LIMIT_DEADBAND_RAD = 0.002;
 const LIMIT_SPEED_DEADBAND_RAD_PER_SEC = 0.03;
+const DEFAULT_SEGMENT_INITIAL_ANGLE_JITTER_DEG = 1.1;
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
 const normalizeRadians = (angle: number) => Math.atan2(Math.sin(angle), Math.cos(angle));
-const rotateVector = (x: number, y: number, angle: number) => {
-  const c = Math.cos(angle);
-  const s = Math.sin(angle);
-  return new b2Vec2(x * c - y * s, x * s + y * c);
-};
-
 /**
  * Bendy twig made from rigid segments connected by soft weld joints.
  */
@@ -89,18 +85,40 @@ export class Twig {
     };
 
     const initialAngle = options.initialAngle ?? 0;
-    const halfLength = this.totalLength / 2;
     const segmentMass = Math.max(0.001, this.tuning.mass) / this.segmentCount;
     const fixtureArea = this.segmentLength * this.fixtureThickness;
     const density = segmentMass / Math.max(fixtureArea, 0.01);
+    const angleJitterRadians = toRadians(Math.max(0, options.segmentAngleJitterDeg ?? DEFAULT_SEGMENT_INITIAL_ANGLE_JITTER_DEG));
+    const segmentAngles: number[] = [];
+    let runningAngle = initialAngle;
+    for (let i = 0; i < this.segmentCount; i += 1) {
+      if (i > 0 && angleJitterRadians > 0) {
+        runningAngle += (Math.random() * 2 - 1) * angleJitterRadians;
+      }
+      segmentAngles.push(runningAngle);
+    }
+
+    const centers: b2Vec2[] = [];
+    let chainX = 0;
+    let chainY = 0;
+    for (let i = 0; i < this.segmentCount; i += 1) {
+      const angle = segmentAngles[i];
+      const c = Math.cos(angle);
+      const s = Math.sin(angle);
+      centers.push(new b2Vec2(chainX + c * this.segmentLength * 0.5, chainY + s * this.segmentLength * 0.5));
+      chainX += c * this.segmentLength;
+      chainY += s * this.segmentLength;
+    }
+    const summedCenters = centers.reduce((acc, center) => new b2Vec2(acc.x + center.x, acc.y + center.y), new b2Vec2());
+    const centroidDivisor = Math.max(1, centers.length);
+    const centroid = new b2Vec2(summedCenters.x / centroidDivisor, summedCenters.y / centroidDivisor);
 
     for (let i = 0; i < this.segmentCount; i += 1) {
-      const localCenterX = -halfLength + this.segmentLength * (i + 0.5);
-      const offset = rotateVector(localCenterX, 0, initialAngle);
+      const center = centers[i];
       const body = this.world.CreateBody({
         type: b2BodyType.b2_dynamicBody,
-        position: new b2Vec2(startPos.x + offset.x, startPos.y + offset.y),
-        angle: initialAngle,
+        position: new b2Vec2(startPos.x + center.x - centroid.x, startPos.y + center.y - centroid.y),
+        angle: segmentAngles[i],
         linearDamping: 0.24,
         angularDamping: this.getSafeAngularDamping(),
         bullet: Boolean(options.bulletSegments),
@@ -121,9 +139,11 @@ export class Twig {
     for (let i = 0; i < this.bodies.length - 1; i += 1) {
       const bodyA = this.bodies[i];
       const bodyB = this.bodies[i + 1];
-      const localAnchorX = -halfLength + this.segmentLength * (i + 1);
-      const anchorOffset = rotateVector(localAnchorX, 0, initialAngle);
-      const anchor = new b2Vec2(startPos.x + anchorOffset.x, startPos.y + anchorOffset.y);
+      const endAX = bodyA.GetPosition().x + Math.cos(bodyA.GetAngle()) * this.segmentLength * 0.5;
+      const endAY = bodyA.GetPosition().y + Math.sin(bodyA.GetAngle()) * this.segmentLength * 0.5;
+      const startBX = bodyB.GetPosition().x - Math.cos(bodyB.GetAngle()) * this.segmentLength * 0.5;
+      const startBY = bodyB.GetPosition().y - Math.sin(bodyB.GetAngle()) * this.segmentLength * 0.5;
+      const anchor = new b2Vec2((endAX + startBX) * 0.5, (endAY + startBY) * 0.5);
       const jointDef = new b2WeldJointDef();
       jointDef.Initialize(bodyA, bodyB, anchor);
       jointDef.collideConnected = false;

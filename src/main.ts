@@ -26,7 +26,10 @@ const WHEEL_ROTATION_RADIANS_PER_DELTA_Y = Math.PI / 5400;
 const MAX_WHEEL_ROTATION_STEP_RAD = Math.PI / 60;
 const TWIG_TEMPLATE_EVERY_N_SHAPES = 3;
 const WORLD_OBJECT_LIMIT = 100;
-const TWIG_DEFAULT_SEGMENT_COUNT = 12;
+const TWIG_DEFAULT_SEGMENT_COUNT = 6;
+const TWIG_DEFAULT_LENGTH = 4.9;
+const TWIG_DEFAULT_THICKNESS = 0.26;
+const TWIG_COLOR = '#c98a54';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) {
@@ -403,7 +406,7 @@ const angularDampingControl = addTuningControl(
 );
 
 const massControl = addTuningControl(
-  'Twig Mass',
+  'Twig Total Mass',
   0.01,
   TWIG_TUNING.mass,
   (rawValue) => {
@@ -751,9 +754,9 @@ const createTwigTemplate = (): TwigPieceTemplate => {
   return {
     kind: 'twig',
     id: `piece-${pieceCounter}`,
-    color: randomColor(),
-    length: 3.8 + Math.random() * 2.3,
-    thickness: 0.24 + Math.random() * 0.16,
+    color: TWIG_COLOR,
+    length: TWIG_DEFAULT_LENGTH,
+    thickness: TWIG_DEFAULT_THICKNESS,
     segmentCount,
     tuning: {
       angleLimitDeg: TWIG_TUNING.angleLimitDeg,
